@@ -1,0 +1,80 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    --bg-base: #faf9f6;
+    --bg-surface: #ffffff;
+    --bg-subtle: #f3f2ee;
+    --bg-overlay: rgba(15, 23, 42, 0.4);
+
+    --text-primary: #1c1917;
+    --text-secondary: #57534e;
+    --text-muted: #a8a29e;
+    --border-color: #e7e5e4;
+
+    /* Semantic pastel tokens */
+    --breast-left: #f472b6;
+    --breast-left-soft: #fdf2f8;
+    --breast-left-border: #fbcfe8;
+
+    --breast-right: #38bdf8;
+    --breast-right-soft: #f0f9ff;
+    --breast-right-border: #bae6fd;
+
+    --bottle: #a78bfa;
+    --bottle-soft: #f5f3ff;
+    --bottle-border: #ddd6fe;
+
+    --meds-accent: #34d399;
+    --meds-soft: #ecfdf5;
+    --meds-border: #a7f3d0;
+
+    --warning-accent: #f59e0b;
+    --warning-soft: #fffbeb;
+    --warning-border: #fde68a;
+  }
+
+  .dark {
+    --bg-base: #090d16;
+    --bg-surface: #131b2e;
+    --bg-subtle: #1e293b;
+    --bg-overlay: rgba(0, 0, 0, 0.7);
+
+    --text-primary: #f8fafc;
+    --text-secondary: #cbd5e1;
+    --text-muted: #64748b;
+    --border-color: #334155;
+
+    /* Semantic pastel tokens in dark mode (adjusted luminance & soft glow) */
+    --breast-left: #f472b6;
+    --breast-left-soft: #83184325;
+    --breast-left-border: #be185d40;
+
+    --breast-right: #38bdf8;
+    --breast-right-soft: #07598525;
+    --breast-right-border: #0284c740;
+
+    --bottle: #a78bfa;
+    --bottle-soft: #5b21b625;
+    --bottle-border: #7c3aed40;
+
+    --meds-accent: #34d399;
+    --meds-soft: #065f4625;
+    --meds-border: #05966940;
+
+    --warning-accent: #fbbf24;
+    --warning-soft: #78350f25;
+    --warning-border: #d9770640;
+  }
+
+  body {
+    background-color: var(--bg-base);
+    color: var(--text-primary);
+    font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+    -webkit-font-smoothing: antialiased;
+    -webkit-tap-highlight-color: transparent;
+    user-select: none;
+  }
+}
