@@ -82,22 +82,39 @@ CREATE TABLE IF NOT EXISTS public.medication_logs (
     created_at TIMESTAMPTZ NOT NULL DEFAULT timezone('utc'::text, now())
 );
 
--- 6. PERFORMANCE & SECURITY INDEXES
+-- 6. TABLE: SLEEP_LOGS (Registro de sueño y siestas)
+CREATE TABLE IF NOT EXISTS public.sleep_logs (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    user_id UUID REFERENCES auth.users(id) ON DELETE CASCADE DEFAULT auth.uid(),
+    
+    started_at TIMESTAMPTZ NOT NULL DEFAULT timezone('utc'::text, now()),
+    ended_at TIMESTAMPTZ NOT NULL DEFAULT timezone('utc'::text, now()),
+    duration_seconds INTEGER NOT NULL DEFAULT 0,
+    notes TEXT NULL,
+    
+    created_at TIMESTAMPTZ NOT NULL DEFAULT timezone('utc'::text, now()),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT timezone('utc'::text, now()),
+
+    CONSTRAINT chk_sleep_duration_non_negative CHECK (duration_seconds >= 0),
+    CONSTRAINT chk_sleep_chronological_times CHECK (ended_at >= started_at)
+);
+
+-- 7. PERFORMANCE & SECURITY INDEXES
 CREATE INDEX IF NOT EXISTS idx_feedings_user_started ON public.feedings (user_id, started_at DESC);
 CREATE INDEX IF NOT EXISTS idx_feedings_started_at ON public.feedings (started_at DESC);
 CREATE INDEX IF NOT EXISTS idx_medications_user_active ON public.medications (user_id, is_active);
 CREATE INDEX IF NOT EXISTS idx_med_logs_user_administered ON public.medication_logs (user_id, administered_at DESC);
 CREATE INDEX IF NOT EXISTS idx_med_logs_med_id ON public.medication_logs (medication_id, administered_at DESC);
+CREATE INDEX IF NOT EXISTS idx_sleep_user_started ON public.sleep_logs (user_id, started_at DESC);
+CREATE INDEX IF NOT EXISTS idx_sleep_started_at ON public.sleep_logs (started_at DESC);
 
--- 7. ROW LEVEL SECURITY (RLS) POLICIES
--- OWASP A01: Broken Access Control Mitigation
+-- 8. ROW LEVEL SECURITY (RLS) POLICIES
 ALTER TABLE public.feedings ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.medications ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.medication_logs ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.sleep_logs ENABLE ROW LEVEL SECURITY;
 
 -- Politicas para FEEDINGS
--- Modo autenticado: el usuario solo lee/escribe sus propios registros.
--- Modo anónimo/guest: registros con user_id IS NULL son accesibles para el cliente MVP.
 CREATE POLICY "Feedings access policy" ON public.feedings
     FOR ALL
     USING (
@@ -123,6 +140,18 @@ CREATE POLICY "Medications access policy" ON public.medications
 
 -- Politicas para MEDICATION_LOGS
 CREATE POLICY "Medication logs access policy" ON public.medication_logs
+    FOR ALL
+    USING (
+        (auth.uid() IS NOT NULL AND user_id = auth.uid()) OR
+        (auth.uid() IS NULL AND user_id IS NULL)
+    )
+    WITH CHECK (
+        (auth.uid() IS NOT NULL AND user_id = auth.uid()) OR
+        (auth.uid() IS NULL AND user_id IS NULL)
+    );
+
+-- Politicas para SLEEP_LOGS
+CREATE POLICY "Sleep access policy" ON public.sleep_logs
     FOR ALL
     USING (
         (auth.uid() IS NOT NULL AND user_id = auth.uid()) OR

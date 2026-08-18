@@ -2,10 +2,11 @@
 import { ref, computed, onMounted } from 'vue';
 import { Moon, Sun, Baby, AlertTriangle } from 'lucide-vue-next';
 import { useFeedingTracker } from '~/composables/useFeedingTracker';
+import { useSleepTracker } from '~/composables/useSleepTracker';
 import { useMedicationTracker } from '~/composables/useMedicationTracker';
 import { useTheme } from '~/composables/useTheme';
 import type { TabType } from '~/components/BottomNav.vue';
-import type { CreateFeedingDTO, CreateMedicationDTO } from '~/types/baby-tracker';
+import type { CreateFeedingDTO, CreateSleepDTO, CreateMedicationDTO } from '~/types/baby-tracker';
 
 // Navigation tab state
 const currentTab = ref<TabType>('feeding');
@@ -18,19 +19,36 @@ const {
   feedings,
   isLoading: isFeedingLoading,
   error: feedingError,
-  activeSession,
+  activeSession: activeFeedingSession,
   lastFeeding,
-  stats,
+  stats: feedingStats,
   fetchFeedings,
   startBreastSession,
   switchBreastSide,
-  pauseActiveSession,
-  resumeActiveSession,
-  finishActiveSession,
-  cancelActiveSession,
+  pauseActiveSession: pauseFeedingSession,
+  resumeActiveSession: resumeFeedingSession,
+  finishActiveSession: finishFeedingSession,
+  cancelActiveSession: cancelFeedingSession,
   createManualFeeding,
   deleteFeeding
 } = useFeedingTracker();
+
+const {
+  sleepLogs,
+  isLoading: isSleepLoading,
+  error: sleepError,
+  activeSession: activeSleepSession,
+  lastSleepLog,
+  sleepStats,
+  fetchSleepLogs,
+  startSleepSession,
+  pauseSleepSession,
+  resumeSleepSession,
+  finishSleepSession,
+  cancelSleepSession,
+  createManualSleep,
+  deleteSleep
+} = useSleepTracker();
 
 const {
   medications,
@@ -43,16 +61,26 @@ const {
 } = useMedicationTracker();
 
 // UI Modals state
-const isManualModalOpen = ref<boolean>(false);
+const isManualFeedingOpen = ref<boolean>(false);
+const isManualSleepOpen = ref<boolean>(false);
 
 const hasOverdueMeds = computed(() => {
   return medications.value.some(m => m.is_overdue);
 });
 
-const handleManualSubmit = async (dto: CreateFeedingDTO) => {
+const handleManualFeedingSubmit = async (dto: CreateFeedingDTO) => {
   try {
     await createManualFeeding(dto);
-    isManualModalOpen.value = false;
+    isManualFeedingOpen.value = false;
+  } catch (e) {
+    // Handled in composable
+  }
+};
+
+const handleManualSleepSubmit = async (dto: CreateSleepDTO) => {
+  try {
+    await createManualSleep(dto);
+    isManualSleepOpen.value = false;
   } catch (e) {
     // Handled in composable
   }
@@ -69,6 +97,7 @@ const handleCreateMedication = async (dto: CreateMedicationDTO) => {
 onMounted(() => {
   initTheme();
   fetchFeedings();
+  fetchSleepLogs();
   fetchMedications();
 });
 </script>
@@ -79,13 +108,28 @@ onMounted(() => {
     <header class="sticky top-0 z-40 bg-surface/80 backdrop-blur-md border-b border-borderSubtle px-4 py-3.5">
       <div class="max-w-md mx-auto flex items-center justify-between">
         <div class="flex items-center gap-2.5">
-          <div class="w-8 h-8 rounded-xl bg-breastLeft-soft border border-breastLeft-border flex items-center justify-center text-breastLeft">
-            <Baby class="w-5 h-5" />
+          <div 
+            class="w-8 h-8 rounded-xl flex items-center justify-center border transition-all"
+            :class="{
+              'bg-breastLeft-soft border-breastLeft-border text-breastLeft': currentTab === 'feeding',
+              'bg-bottle-soft border-bottle-border text-bottle': currentTab === 'sleep',
+              'bg-meds-soft border-meds-border text-meds': currentTab === 'meds',
+              'bg-subtle border-borderSubtle text-primaryText': currentTab === 'stats'
+            }"
+          >
+            <Baby v-if="currentTab === 'feeding'" class="w-5 h-5" />
+            <Moon v-else-if="currentTab === 'sleep'" class="w-5 h-5" />
+            <Baby v-else class="w-5 h-5" />
           </div>
           <div>
             <h1 class="text-base font-extrabold tracking-tight text-primaryText leading-none">Baby Tracker</h1>
             <span class="text-[10px] font-medium text-mutedText">
-              {{ currentTab === 'feeding' ? 'Lactancia y Tomas' : currentTab === 'meds' ? 'Medicación y Cuidados' : 'Métricas y Resumen' }}
+              {{ 
+                currentTab === 'feeding' ? 'Lactancia y Tomas' : 
+                currentTab === 'sleep' ? 'Control de Sueño' : 
+                currentTab === 'meds' ? 'Medicación y Cuidados' : 
+                'Métricas y Resumen' 
+              }}
             </span>
           </div>
         </div>
@@ -108,14 +152,14 @@ onMounted(() => {
       
       <!-- Global Error / Notice Banner -->
       <div 
-        v-if="feedingError || medError" 
+        v-if="feedingError || sleepError || medError" 
         class="p-3.5 rounded-2xl bg-warningSoft-soft border border-warningSoft-border text-xs text-primaryText flex items-start gap-2.5"
       >
         <AlertTriangle class="w-4 h-4 text-warningSoft flex-shrink-0 mt-0.5" />
         <div class="flex-1">
-          <p class="font-bold">Aviso de conexión con Supabase</p>
+          <p class="font-bold">Aviso de conexión</p>
           <p class="text-secondaryText text-[11px] mt-0.5">
-            {{ feedingError || medError }}.
+            {{ feedingError || sleepError || medError }}
           </p>
         </div>
       </div>
@@ -126,27 +170,53 @@ onMounted(() => {
           :last-feeding="lastFeeding"
           :is-loading="isFeedingLoading"
           @start-breast="startBreastSession"
-          @open-manual="isManualModalOpen = true"
+          @open-manual="isManualFeedingOpen = true"
         />
 
-        <!-- Mini Quick KPI Summary on Main Dashboard -->
+        <!-- Mini Quick KPI Summary -->
         <div class="grid grid-cols-2 gap-3">
           <div class="p-4 rounded-2xl bg-surface border border-borderSubtle shadow-soft-sm">
             <span class="text-[11px] font-semibold text-mutedText block">Tomas de hoy</span>
             <span class="text-2xl font-black text-primaryText font-mono mt-0.5 block">
-              {{ stats.totalFeedingsToday }}
+              {{ feedingStats.totalFeedingsToday }}
             </span>
           </div>
           <div class="p-4 rounded-2xl bg-surface border border-borderSubtle shadow-soft-sm">
             <span class="text-[11px] font-semibold text-mutedText block">Duración media</span>
             <span class="text-2xl font-black text-primaryText font-mono mt-0.5 block">
-              {{ stats.avgDurationMinutes }}<span class="text-xs font-normal text-mutedText ml-0.5">min</span>
+              {{ feedingStats.avgDurationMinutes }}<span class="text-xs font-normal text-mutedText ml-0.5">min</span>
             </span>
           </div>
         </div>
       </div>
 
-      <!-- Tab 2: Medicación / Meds View -->
+      <!-- Tab 2: Sueño / Sleep View -->
+      <div v-show="currentTab === 'sleep'" class="space-y-4 animate-in fade-in duration-150">
+        <SleepHero
+          :last-sleep="lastSleepLog"
+          :is-loading="isSleepLoading"
+          @start-sleep="startSleepSession"
+          @open-manual="isManualSleepOpen = true"
+        />
+
+        <!-- Mini Sleep KPI Summary -->
+        <div class="grid grid-cols-2 gap-3">
+          <div class="p-4 rounded-2xl bg-surface border border-borderSubtle shadow-soft-sm">
+            <span class="text-[11px] font-semibold text-mutedText block">Total Sueño Hoy</span>
+            <span class="text-2xl font-black text-primaryText font-mono mt-0.5 block">
+              {{ sleepStats.totalSleepFormatted }}
+            </span>
+          </div>
+          <div class="p-4 rounded-2xl bg-surface border border-borderSubtle shadow-soft-sm">
+            <span class="text-[11px] font-semibold text-mutedText block">Siestas Registradas</span>
+            <span class="text-2xl font-black text-primaryText font-mono mt-0.5 block">
+              {{ sleepStats.napCountToday }}
+            </span>
+          </div>
+        </div>
+      </div>
+
+      <!-- Tab 3: Medicación / Meds View -->
       <div v-show="currentTab === 'meds'" class="animate-in fade-in duration-150">
         <MedicationCard
           :medications="medications"
@@ -157,13 +227,16 @@ onMounted(() => {
         />
       </div>
 
-      <!-- Tab 3: Estadísticas / Stats View -->
+      <!-- Tab 4: Estadísticas / Stats View -->
       <div v-show="currentTab === 'stats'" class="animate-in fade-in duration-150">
         <FeedingStats
-          :stats="stats"
+          :stats="feedingStats"
           :feedings="feedings"
-          :is-loading="isFeedingLoading"
+          :sleep-stats="sleepStats"
+          :sleep-logs="sleepLogs"
+          :is-loading="isFeedingLoading || isSleepLoading"
           @delete-feeding="deleteFeeding"
+          @delete-sleep="deleteSleep"
         />
       </div>
 
@@ -176,24 +249,44 @@ onMounted(() => {
       @update:tab="tab => currentTab = tab"
     />
 
-    <!-- Active Live Timer Modal -->
+    <!-- Active Live Breastfeeding Timer Modal -->
     <FeedingTimerModal
-      :session="activeSession"
+      :session="activeFeedingSession"
       :is-loading="isFeedingLoading"
       @switch-side="switchBreastSide"
-      @pause="pauseActiveSession"
-      @resume="resumeActiveSession"
-      @finish="finishActiveSession"
-      @cancel="cancelActiveSession"
-      @update:notes="val => activeSession.notes = val"
+      @pause="pauseFeedingSession"
+      @resume="resumeFeedingSession"
+      @finish="finishFeedingSession"
+      @cancel="cancelFeedingSession"
+      @update:notes="val => activeFeedingSession.notes = val"
     />
 
-    <!-- Retroactive Manual Register Modal -->
+    <!-- Retroactive Manual Feeding Register Modal -->
     <FeedingManualModal
-      :is-open="isManualModalOpen"
+      :is-open="isManualFeedingOpen"
       :is-loading="isFeedingLoading"
-      @close="isManualModalOpen = false"
-      @submit="handleManualSubmit"
+      @close="isManualFeedingOpen = false"
+      @submit="handleManualFeedingSubmit"
     />
+
+    <!-- Active Live Sleep Timer Modal -->
+    <SleepTimerModal
+      :session="activeSleepSession"
+      :is-loading="isSleepLoading"
+      @pause="pauseSleepSession"
+      @resume="resumeSleepSession"
+      @finish="finishSleepSession"
+      @cancel="cancelSleepSession"
+      @update:notes="val => activeSleepSession.notes = val"
+    />
+
+    <!-- Retroactive Manual Sleep Register Modal -->
+    <SleepManualModal
+      :is-open="isManualSleepOpen"
+      :is-loading="isSleepLoading"
+      @close="isManualSleepOpen = false"
+      @submit="handleManualSleepSubmit"
+    />
+
   </div>
 </template>

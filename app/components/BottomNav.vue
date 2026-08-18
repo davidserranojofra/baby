@@ -1,7 +1,7 @@
 <script setup lang="ts">
-import { Baby, Pill, BarChart2 } from 'lucide-vue-next';
+import { Baby, Moon, Pill, BarChart2 } from 'lucide-vue-next';
 
-export type TabType = 'feeding' | 'meds' | 'stats';
+export type TabType = 'feeding' | 'sleep' | 'meds' | 'stats';
 
 defineProps<{
   currentTab: TabType;
@@ -15,7 +15,7 @@ const emit = defineEmits<{
 
 <template>
   <nav class="fixed bottom-0 inset-x-0 z-40 bg-surface/90 backdrop-blur-xl border-t border-borderSubtle safe-area-bottom">
-    <div class="max-w-md mx-auto px-4 h-16 flex items-center justify-around">
+    <div class="max-w-md mx-auto px-2 h-16 flex items-center justify-around">
       
       <!-- Tab 1: Lactancia / Feeding -->
       <button
@@ -30,10 +30,26 @@ const emit = defineEmits<{
         >
           <Baby class="w-5 h-5" />
         </div>
-        <span class="text-[11px] leading-none">Lactancia</span>
+        <span class="text-[10px] sm:text-[11px] leading-none">Lactancia</span>
       </button>
 
-      <!-- Tab 2: Medicamentos / Meds -->
+      <!-- Tab 2: Sueño / Sleep -->
+      <button
+        type="button"
+        @click="emit('update:tab', 'sleep')"
+        class="flex-1 py-1.5 flex flex-col items-center justify-center gap-1 transition-all active:scale-95 relative"
+        :class="currentTab === 'sleep' ? 'text-bottle font-bold' : 'text-mutedText hover:text-secondaryText font-medium'"
+      >
+        <div 
+          class="p-1 rounded-xl transition-all"
+          :class="currentTab === 'sleep' ? 'bg-bottle-soft' : ''"
+        >
+          <Moon class="w-5 h-5" />
+        </div>
+        <span class="text-[10px] sm:text-[11px] leading-none">Sueño</span>
+      </button>
+
+      <!-- Tab 3: Medicamentos / Meds -->
       <button
         type="button"
         @click="emit('update:tab', 'meds')"
@@ -51,10 +67,10 @@ const emit = defineEmits<{
             class="absolute top-0 right-0 w-2 h-2 rounded-full bg-warningSoft ring-2 ring-surface animate-pulse"
           />
         </div>
-        <span class="text-[11px] leading-none">Medicación</span>
+        <span class="text-[10px] sm:text-[11px] leading-none">Medicación</span>
       </button>
 
-      <!-- Tab 3: Estadísticas / Stats -->
+      <!-- Tab 4: Estadísticas / Stats -->
       <button
         type="button"
         @click="emit('update:tab', 'stats')"
@@ -67,7 +83,7 @@ const emit = defineEmits<{
         >
           <BarChart2 class="w-5 h-5" />
         </div>
-        <span class="text-[11px] leading-none">Estadísticas</span>
+        <span class="text-[10px] sm:text-[11px] leading-none">Estadísticas</span>
       </button>
 
     </div>

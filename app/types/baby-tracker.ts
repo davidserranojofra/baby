@@ -93,3 +93,43 @@ export interface ActiveFeedingSession {
   amountMl: number | null;
   notes: string;
 }
+
+// ------------------------------------------------------------------------------
+// SLEEP DOMAIN TYPES
+// ------------------------------------------------------------------------------
+
+export interface SleepLog {
+  id: string;
+  user_id?: string | null;
+  started_at: string;
+  ended_at: string;
+  duration_seconds: number;
+  notes?: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface CreateSleepDTO {
+  started_at: string;
+  ended_at: string;
+  duration_seconds: number;
+  notes?: string | null;
+}
+
+export interface ActiveSleepSession {
+  isActive: boolean;
+  isPaused: boolean;
+  startedAt: string | null;
+  lastTickTime: number | null;
+  elapsedSeconds: number;
+  notes: string;
+}
+
+export interface SleepStatsSummary {
+  totalSleepSecondsToday: number;
+  totalSleepFormatted: string;
+  napCountToday: number;
+  avgNapMinutesToday: number;
+  longestNapMinutesToday: number;
+  lastSleep?: SleepLog | null;
+}
