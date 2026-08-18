@@ -35,24 +35,6 @@ export const useMedicationTracker = () => {
       recentLogs.value = (logsData as MedicationLog[]) || [];
       const rawMeds = (medsData as Medication[]) || [];
 
-      // If no medications exist yet (fresh database), create default Vitamina D entry
-      if (rawMeds.length === 0) {
-        const { data: defaultMed, error: defaultError } = await supabase
-          .from('medications')
-          .insert([{
-            name: 'Vitamina D3',
-            dose_description: '4 gotas (o según indicación)',
-            interval_hours: 24,
-            notes: 'Suplemento diario recomendado'
-          }])
-          .select()
-          .single();
-
-        if (!defaultError && defaultMed) {
-          rawMeds.push(defaultMed as Medication);
-        }
-      }
-
       // Compute status for each medication
       const now = Date.now();
       medications.value = rawMeds.map(med => {

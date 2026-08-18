@@ -71,12 +71,20 @@ const formatTimeAgo = (hours: number | null | undefined) => {
     </div>
 
     <!-- Empty State -->
-    <div v-if="medications.length === 0" class="py-6 text-center text-mutedText text-xs">
-      <p>No hay medicamentos configurados.</p>
+    <div v-if="medications.length === 0" class="py-6 px-4 text-center rounded-2xl bg-subtle/60 border border-dashed border-borderSubtle">
+      <p class="text-xs text-mutedText">No tenés medicamentos asignados.</p>
+      <button
+        type="button"
+        @click="isAddModalOpen = true"
+        class="mt-2.5 inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-surface border border-borderSubtle text-xs font-semibold text-primaryText hover:bg-subtle active:scale-95 transition-all shadow-sm"
+      >
+        <Plus class="w-3.5 h-3.5" />
+        <span>Añadir medicamento</span>
+      </button>
     </div>
 
     <!-- Medication Items List -->
-    <div class="space-y-3">
+    <div v-else class="space-y-3">
       <div
         v-for="med in medications"
         :key="med.id"

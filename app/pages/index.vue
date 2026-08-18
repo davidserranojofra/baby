@@ -1,10 +1,14 @@
 <script setup lang="ts">
-import { ref, onMounted } from 'vue';
-import { Moon, Sun, Baby, AlertTriangle, RefreshCw } from 'lucide-vue-next';
+import { ref, computed, onMounted } from 'vue';
+import { Moon, Sun, Baby, AlertTriangle } from 'lucide-vue-next';
 import { useFeedingTracker } from '~/composables/useFeedingTracker';
 import { useMedicationTracker } from '~/composables/useMedicationTracker';
 import { useTheme } from '~/composables/useTheme';
+import type { TabType } from '~/components/BottomNav.vue';
 import type { CreateFeedingDTO, CreateMedicationDTO } from '~/types/baby-tracker';
+
+// Navigation tab state
+const currentTab = ref<TabType>('feeding');
 
 // Theme composable
 const { isDark, toggleTheme, initTheme } = useTheme();
@@ -41,12 +45,16 @@ const {
 // UI Modals state
 const isManualModalOpen = ref<boolean>(false);
 
+const hasOverdueMeds = computed(() => {
+  return medications.value.some(m => m.is_overdue);
+});
+
 const handleManualSubmit = async (dto: CreateFeedingDTO) => {
   try {
     await createManualFeeding(dto);
     isManualModalOpen.value = false;
   } catch (e) {
-    // Handled in composable error state
+    // Handled in composable
   }
 };
 
@@ -66,8 +74,8 @@ onMounted(() => {
 </script>
 
 <template>
-  <div class="min-h-screen bg-base text-primaryText transition-colors duration-200 pb-12">
-    <!-- Top Mobile-Friendly Navbar -->
+  <div class="min-h-screen bg-base text-primaryText transition-colors duration-200 pb-24">
+    <!-- Top Mobile Navbar -->
     <header class="sticky top-0 z-40 bg-surface/80 backdrop-blur-md border-b border-borderSubtle px-4 py-3.5">
       <div class="max-w-md mx-auto flex items-center justify-between">
         <div class="flex items-center gap-2.5">
@@ -76,7 +84,9 @@ onMounted(() => {
           </div>
           <div>
             <h1 class="text-base font-extrabold tracking-tight text-primaryText leading-none">Baby Tracker</h1>
-            <span class="text-[10px] font-medium text-mutedText">Lactancia y Cuidados</span>
+            <span class="text-[10px] font-medium text-mutedText">
+              {{ currentTab === 'feeding' ? 'Lactancia y Tomas' : currentTab === 'meds' ? 'Medicación y Cuidados' : 'Métricas y Resumen' }}
+            </span>
           </div>
         </div>
 
@@ -96,7 +106,7 @@ onMounted(() => {
     <!-- Main Mobile Content Area -->
     <main class="max-w-md mx-auto px-4 pt-4 space-y-4">
       
-      <!-- Global Error / Notice Banner (OWASP & Resilient Connection state) -->
+      <!-- Global Error / Notice Banner -->
       <div 
         v-if="feedingError || medError" 
         class="p-3.5 rounded-2xl bg-warningSoft-soft border border-warningSoft-border text-xs text-primaryText flex items-start gap-2.5"
@@ -105,37 +115,66 @@ onMounted(() => {
         <div class="flex-1">
           <p class="font-bold">Aviso de conexión con Supabase</p>
           <p class="text-secondaryText text-[11px] mt-0.5">
-            {{ feedingError || medError }}. Asegúrate de configurar tus variables de Supabase en el archivo <code class="font-mono bg-subtle px-1 py-0.5 rounded">.env</code>.
+            {{ feedingError || medError }}.
           </p>
         </div>
       </div>
 
-      <!-- Module 1: Feeding Hero Dashboard -->
-      <FeedingHero
-        :last-feeding="lastFeeding"
-        :is-loading="isFeedingLoading"
-        @start-breast="startBreastSession"
-        @open-manual="isManualModalOpen = true"
-      />
+      <!-- Tab 1: Lactancia / Feeding View -->
+      <div v-show="currentTab === 'feeding'" class="space-y-4 animate-in fade-in duration-150">
+        <FeedingHero
+          :last-feeding="lastFeeding"
+          :is-loading="isFeedingLoading"
+          @start-breast="startBreastSession"
+          @open-manual="isManualModalOpen = true"
+        />
 
-      <!-- Module 2: Medication & Vitamin D Card -->
-      <MedicationCard
-        :medications="medications"
-        :is-loading="isMedLoading"
-        @log-dose="logDose"
-        @create-medication="handleCreateMedication"
-        @delete-medication="deleteMedication"
-      />
+        <!-- Mini Quick KPI Summary on Main Dashboard -->
+        <div class="grid grid-cols-2 gap-3">
+          <div class="p-4 rounded-2xl bg-surface border border-borderSubtle shadow-soft-sm">
+            <span class="text-[11px] font-semibold text-mutedText block">Tomas de hoy</span>
+            <span class="text-2xl font-black text-primaryText font-mono mt-0.5 block">
+              {{ stats.totalFeedingsToday }}
+            </span>
+          </div>
+          <div class="p-4 rounded-2xl bg-surface border border-borderSubtle shadow-soft-sm">
+            <span class="text-[11px] font-semibold text-mutedText block">Duración media</span>
+            <span class="text-2xl font-black text-primaryText font-mono mt-0.5 block">
+              {{ stats.avgDurationMinutes }}<span class="text-xs font-normal text-mutedText ml-0.5">min</span>
+            </span>
+          </div>
+        </div>
+      </div>
 
-      <!-- Module 3: Metrics & Historical Timeline -->
-      <FeedingStats
-        :stats="stats"
-        :feedings="feedings"
-        :is-loading="isFeedingLoading"
-        @delete-feeding="deleteFeeding"
-      />
+      <!-- Tab 2: Medicación / Meds View -->
+      <div v-show="currentTab === 'meds'" class="animate-in fade-in duration-150">
+        <MedicationCard
+          :medications="medications"
+          :is-loading="isMedLoading"
+          @log-dose="logDose"
+          @create-medication="handleCreateMedication"
+          @delete-medication="deleteMedication"
+        />
+      </div>
+
+      <!-- Tab 3: Estadísticas / Stats View -->
+      <div v-show="currentTab === 'stats'" class="animate-in fade-in duration-150">
+        <FeedingStats
+          :stats="stats"
+          :feedings="feedings"
+          :is-loading="isFeedingLoading"
+          @delete-feeding="deleteFeeding"
+        />
+      </div>
 
     </main>
+
+    <!-- Bottom Navigation Bar -->
+    <BottomNav
+      :current-tab="currentTab"
+      :has-overdue-meds="hasOverdueMeds"
+      @update:tab="tab => currentTab = tab"
+    />
 
     <!-- Active Live Timer Modal -->
     <FeedingTimerModal
