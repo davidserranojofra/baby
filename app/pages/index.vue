@@ -1,10 +1,11 @@
 <script setup lang="ts">
 import { ref, computed, onMounted } from 'vue';
-import { Moon, Sun, Baby, AlertTriangle } from 'lucide-vue-next';
+import { Moon, Sun, Baby, AlertTriangle, LogOut, User as UserIcon, Loader2 } from 'lucide-vue-next';
 import { useFeedingTracker } from '~/composables/useFeedingTracker';
 import { useSleepTracker } from '~/composables/useSleepTracker';
 import { useMedicationTracker } from '~/composables/useMedicationTracker';
 import { useTheme } from '~/composables/useTheme';
+import { useAuth } from '~/composables/useAuth';
 import type { TabType } from '~/components/BottomNav.vue';
 import type { CreateFeedingDTO, CreateSleepDTO, CreateMedicationDTO } from '~/types/baby-tracker';
 
@@ -13,6 +14,10 @@ const currentTab = ref<TabType>('feeding');
 
 // Theme composable
 const { isDark, toggleTheme, initTheme } = useTheme();
+
+// Auth composable
+const { user, userDisplayName, userEmail, logout, isLoading: isAuthLoading } = useAuth();
+const isLogoutModalOpen = ref(false);
 
 // Domain Composables
 const {
@@ -94,6 +99,11 @@ const handleCreateMedication = async (dto: CreateMedicationDTO) => {
   }
 };
 
+const confirmLogout = async () => {
+  await logout();
+  isLogoutModalOpen.value = false;
+};
+
 onMounted(() => {
   initTheme();
   fetchFeedings();
@@ -105,7 +115,7 @@ onMounted(() => {
 <template>
   <div class="min-h-screen bg-base text-primaryText transition-colors duration-200 pb-24">
     <!-- Top Mobile Navbar -->
-    <header class="sticky top-0 z-40 bg-surface/80 backdrop-blur-md border-b border-borderSubtle px-4 py-3.5">
+    <header class="sticky top-0 z-40 bg-surface/80 backdrop-blur-md border-b border-borderSubtle px-4 py-3">
       <div class="max-w-md mx-auto flex items-center justify-between">
         <div class="flex items-center gap-2.5">
           <div 
@@ -123,27 +133,33 @@ onMounted(() => {
           </div>
           <div>
             <h1 class="text-base font-extrabold tracking-tight text-primaryText leading-none">Baby Tracker</h1>
-            <span class="text-[10px] font-medium text-mutedText">
-              {{ 
-                currentTab === 'feeding' ? 'Lactancia y Tomas' : 
-                currentTab === 'sleep' ? 'Control de Sueño' : 
-                currentTab === 'meds' ? 'Medicación y Cuidados' : 
-                'Métricas y Resumen' 
-              }}
+            <span class="text-[10px] font-medium text-mutedText block mt-0.5 truncate max-w-[140px]" :title="userEmail">
+              {{ userDisplayName || 'Mi Bebé' }}
             </span>
           </div>
         </div>
 
-        <!-- Right action: Dark Mode Toggle -->
-        <button
-          type="button"
-          @click="toggleTheme"
-          class="p-2 rounded-xl bg-subtle hover:bg-borderSubtle text-secondaryText hover:text-primaryText transition-all active:scale-95 border border-borderSubtle"
-          :title="isDark ? 'Cambiar a modo claro' : 'Cambiar a modo oscuro'"
-        >
-          <Sun v-if="isDark" class="w-4 h-4 text-warningSoft" />
-          <Moon v-else class="w-4 h-4 text-primaryText" />
-        </button>
+        <!-- Right actions: Theme Toggle + Logout -->
+        <div class="flex items-center gap-1.5">
+          <button
+            type="button"
+            @click="toggleTheme"
+            class="p-2 rounded-xl bg-subtle hover:bg-borderSubtle text-secondaryText hover:text-primaryText transition-all active:scale-95 border border-borderSubtle"
+            :title="isDark ? 'Cambiar a modo claro' : 'Cambiar a modo oscuro'"
+          >
+            <Sun v-if="isDark" class="w-4 h-4 text-warningSoft" />
+            <Moon v-else class="w-4 h-4 text-primaryText" />
+          </button>
+
+          <button
+            type="button"
+            @click="isLogoutModalOpen = true"
+            class="p-2 rounded-xl bg-subtle hover:bg-rose-500/10 text-secondaryText hover:text-rose-500 transition-all active:scale-95 border border-borderSubtle"
+            title="Cerrar sesión"
+          >
+            <LogOut class="w-4 h-4" />
+          </button>
+        </div>
       </div>
     </header>
 
@@ -287,6 +303,43 @@ onMounted(() => {
       @close="isManualSleepOpen = false"
       @submit="handleManualSleepSubmit"
     />
+
+    <!-- Logout Confirmation Modal -->
+    <div
+      v-if="isLogoutModalOpen"
+      class="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm animate-in fade-in duration-150"
+      @click.self="isLogoutModalOpen = false"
+    >
+      <div class="w-full max-w-xs bg-surface rounded-3xl border border-borderSubtle p-6 shadow-soft-lg space-y-4 text-center animate-in zoom-in-95 duration-150">
+        <div class="w-12 h-12 mx-auto rounded-2xl bg-rose-500/10 border border-rose-500/20 flex items-center justify-center text-rose-500">
+          <LogOut class="w-6 h-6" />
+        </div>
+        <div class="space-y-1">
+          <h3 class="text-base font-extrabold text-primaryText">¿Cerrar sesión?</h3>
+          <p class="text-xs text-mutedText leading-relaxed">
+            Se cerrará tu sesión activa en este dispositivo. Tus datos guardados están seguros.
+          </p>
+        </div>
+        <div class="flex gap-2.5 pt-2">
+          <button
+            type="button"
+            @click="isLogoutModalOpen = false"
+            class="flex-1 py-2.5 rounded-2xl bg-subtle text-secondaryText font-bold text-xs hover:bg-borderSubtle transition-all"
+          >
+            Cancelar
+          </button>
+          <button
+            type="button"
+            :disabled="isAuthLoading"
+            @click="confirmLogout"
+            class="flex-1 py-2.5 rounded-2xl bg-rose-500 hover:bg-rose-600 text-white font-bold text-xs shadow-soft-sm transition-all flex items-center justify-center gap-1.5 disabled:opacity-60"
+          >
+            <Loader2 v-if="isAuthLoading" class="w-3.5 h-3.5 animate-spin" />
+            <span v-else>Salir</span>
+          </button>
+        </div>
+      </div>
+    </div>
 
   </div>
 </template>

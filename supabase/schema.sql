@@ -114,50 +114,28 @@ ALTER TABLE public.medications ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.medication_logs ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.sleep_logs ENABLE ROW LEVEL SECURITY;
 
--- Politicas para FEEDINGS
-CREATE POLICY "Feedings access policy" ON public.feedings
+-- Strict Multi-tenant User Isolation Policies (OWASP A01)
+CREATE POLICY "Feedings user isolation policy" ON public.feedings
     FOR ALL
-    USING (
-        (auth.uid() IS NOT NULL AND user_id = auth.uid()) OR
-        (auth.uid() IS NULL AND user_id IS NULL)
-    )
-    WITH CHECK (
-        (auth.uid() IS NOT NULL AND user_id = auth.uid()) OR
-        (auth.uid() IS NULL AND user_id IS NULL)
-    );
+    TO authenticated
+    USING (auth.uid() IS NOT NULL AND user_id = auth.uid())
+    WITH CHECK (auth.uid() IS NOT NULL AND user_id = auth.uid());
 
--- Politicas para MEDICATIONS
-CREATE POLICY "Medications access policy" ON public.medications
+CREATE POLICY "Medications user isolation policy" ON public.medications
     FOR ALL
-    USING (
-        (auth.uid() IS NOT NULL AND user_id = auth.uid()) OR
-        (auth.uid() IS NULL AND user_id IS NULL)
-    )
-    WITH CHECK (
-        (auth.uid() IS NOT NULL AND user_id = auth.uid()) OR
-        (auth.uid() IS NULL AND user_id IS NULL)
-    );
+    TO authenticated
+    USING (auth.uid() IS NOT NULL AND user_id = auth.uid())
+    WITH CHECK (auth.uid() IS NOT NULL AND user_id = auth.uid());
 
--- Politicas para MEDICATION_LOGS
-CREATE POLICY "Medication logs access policy" ON public.medication_logs
+CREATE POLICY "Medication logs user isolation policy" ON public.medication_logs
     FOR ALL
-    USING (
-        (auth.uid() IS NOT NULL AND user_id = auth.uid()) OR
-        (auth.uid() IS NULL AND user_id IS NULL)
-    )
-    WITH CHECK (
-        (auth.uid() IS NOT NULL AND user_id = auth.uid()) OR
-        (auth.uid() IS NULL AND user_id IS NULL)
-    );
+    TO authenticated
+    USING (auth.uid() IS NOT NULL AND user_id = auth.uid())
+    WITH CHECK (auth.uid() IS NOT NULL AND user_id = auth.uid());
 
--- Politicas para SLEEP_LOGS
-CREATE POLICY "Sleep access policy" ON public.sleep_logs
+CREATE POLICY "Sleep user isolation policy" ON public.sleep_logs
     FOR ALL
-    USING (
-        (auth.uid() IS NOT NULL AND user_id = auth.uid()) OR
-        (auth.uid() IS NULL AND user_id IS NULL)
-    )
-    WITH CHECK (
-        (auth.uid() IS NOT NULL AND user_id = auth.uid()) OR
-        (auth.uid() IS NULL AND user_id IS NULL)
-    );
+    TO authenticated
+    USING (auth.uid() IS NOT NULL AND user_id = auth.uid())
+    WITH CHECK (auth.uid() IS NOT NULL AND user_id = auth.uid());
+

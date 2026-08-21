@@ -219,6 +219,14 @@ export const useSleepTracker = () => {
     };
   });
 
+  // 12. Reset State on Logout
+  const resetState = () => {
+    cancelSleepSession();
+    sleepLogs.value = [];
+    isLoading.value = false;
+    error.value = null;
+  };
+
   return {
     sleepLogs,
     isLoading,
@@ -233,6 +241,7 @@ export const useSleepTracker = () => {
     finishSleepSession,
     cancelSleepSession,
     createManualSleep,
-    deleteSleep
+    deleteSleep,
+    resetState
   };
 };

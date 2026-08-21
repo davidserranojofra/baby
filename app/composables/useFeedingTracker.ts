@@ -297,6 +297,14 @@ export const useFeedingTracker = () => {
     };
   });
 
+  // 13. Reset State on Logout
+  const resetState = () => {
+    cancelActiveSession();
+    feedings.value = [];
+    isLoading.value = false;
+    error.value = null;
+  };
+
   return {
     feedings,
     isLoading,
@@ -312,6 +320,7 @@ export const useFeedingTracker = () => {
     finishActiveSession,
     cancelActiveSession,
     createManualFeeding,
-    deleteFeeding
+    deleteFeeding,
+    resetState
   };
 };

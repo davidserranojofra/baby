@@ -151,6 +151,14 @@ export const useMedicationTracker = () => {
     }
   };
 
+  // 5. Reset State on Logout
+  const resetState = () => {
+    medications.value = [];
+    recentLogs.value = [];
+    isLoading.value = false;
+    error.value = null;
+  };
+
   return {
     medications,
     recentLogs,
@@ -159,6 +167,7 @@ export const useMedicationTracker = () => {
     fetchMedications,
     logDose,
     createMedication,
-    deleteMedication
+    deleteMedication,
+    resetState
   };
 };
