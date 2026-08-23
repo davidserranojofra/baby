@@ -28,12 +28,14 @@ const activeSession = ref<ActiveSleepSession>({
   isActive: false,
   isPaused: false,
   startedAt: null,
-  lastTickTime: null,
+  segmentStartedAt: null,
+  baseSeconds: 0,
   elapsedSeconds: 0,
   notes: ''
 });
 
 let sleepInterval: ReturnType<typeof setInterval> | null = null;
+let isSleepListenersInitialized = false;
 
 const STORAGE_KEY = 'baby_active_sleep_session';
 
@@ -49,20 +51,22 @@ const saveToStorage = () => {
 export const useSleepTracker = () => {
   const supabase = useSupabaseClient();
 
-  // 1. Live Sleep Stopwatch Ticker
+  // 1. Live Wall-Clock Reconciler (Anchor + Offset Ground Truth)
+  const reconcileElapsed = (now = Date.now()) => {
+    if (!activeSession.value.isActive) return;
+    if (activeSession.value.isPaused || !activeSession.value.segmentStartedAt) {
+      activeSession.value.elapsedSeconds = activeSession.value.baseSeconds || 0;
+      return;
+    }
+    const currentSegment = Math.max(0, Math.floor((now - activeSession.value.segmentStartedAt) / 1000));
+    activeSession.value.elapsedSeconds = (activeSession.value.baseSeconds || 0) + currentSegment;
+  };
+
   const startTimerTicker = () => {
     if (sleepInterval) clearInterval(sleepInterval);
+    reconcileElapsed();
     sleepInterval = setInterval(() => {
-      if (!activeSession.value.isActive || activeSession.value.isPaused || !activeSession.value.lastTickTime) {
-        return;
-      }
-      const now = Date.now();
-      const delta = Math.floor((now - activeSession.value.lastTickTime) / 1000);
-      if (delta > 0) {
-        activeSession.value.elapsedSeconds += delta;
-        activeSession.value.lastTickTime = now;
-        saveToStorage();
-      }
+      reconcileElapsed();
     }, 1000);
   };
 
@@ -80,14 +84,13 @@ export const useSleepTracker = () => {
       if (raw) {
         const saved = JSON.parse(raw) as ActiveSleepSession;
         if (saved && saved.isActive) {
-          if (!saved.isPaused && saved.lastTickTime) {
-            const delta = Math.floor((Date.now() - saved.lastTickTime) / 1000);
-            if (delta > 0) {
-              saved.elapsedSeconds += delta;
-            }
-            saved.lastTickTime = Date.now();
+          // Backward-compatible migration from legacy schema if needed
+          if (saved.baseSeconds === undefined) {
+            saved.baseSeconds = saved.elapsedSeconds || 0;
+            saved.segmentStartedAt = saved.isPaused ? null : (saved.lastTickTime || Date.now());
           }
           activeSession.value = saved;
+          reconcileElapsed();
           if (!saved.isPaused) {
             startTimerTicker();
           }
@@ -98,22 +101,94 @@ export const useSleepTracker = () => {
     }
   };
 
+  // Register resilient foreground/lifecycle sync listeners once
+  const setupLifecycleListeners = () => {
+    if (typeof window === 'undefined' || isSleepListenersInitialized) return;
+    isSleepListenersInitialized = true;
+
+    const onWake = () => {
+      restoreFromStorage();
+      reconcileElapsed();
+    };
+
+    document.addEventListener('visibilitychange', () => {
+      if (document.visibilityState === 'visible') {
+        onWake();
+      } else {
+        saveToStorage();
+      }
+    });
+
+    window.addEventListener('pageshow', onWake);
+    window.addEventListener('focus', onWake);
+    window.addEventListener('storage', (e) => {
+      if (e.key === STORAGE_KEY) {
+        restoreFromStorage();
+      }
+    });
+    window.addEventListener('beforeunload', () => {
+      saveToStorage();
+    });
+  };
+
+  if (typeof window !== 'undefined') {
+    setupLifecycleListeners();
+  }
+
+  // Helper to execute Supabase async queries with automatic clock-skew retry
+  const executeWithRetry = async <T>(fn: () => Promise<T>, retries = 2, delayMs = 1200): Promise<T> => {
+    try {
+      return await fn();
+    } catch (err: any) {
+      const msg = (err?.message || '').toLowerCase();
+      const isClockOrJwtIssue =
+        msg.includes('jwt') ||
+        msg.includes('future') ||
+        msg.includes('invalid_grant') ||
+        msg.includes('not yet valid') ||
+        msg.includes('network') ||
+        msg.includes('fetch');
+
+      if (retries > 0 && isClockOrJwtIssue) {
+        await new Promise(resolve => setTimeout(resolve, delayMs));
+        return executeWithRetry(fn, retries - 1, delayMs);
+      }
+      throw err;
+    }
+  };
+
+  const sanitizeTrackerError = (err: any, fallback: string): string => {
+    if (!err) return fallback;
+    const msg = (err.message || '').toLowerCase();
+    if (msg.includes('jwt') || msg.includes('future') || msg.includes('not yet valid')) {
+      return 'Sincronizando sesión segura...';
+    }
+    if (msg.includes('network') || msg.includes('fetch')) {
+      return 'Sin conexión con el servidor. Reintentando...';
+    }
+    return err.message || fallback;
+  };
+
   // 2. Fetch Sleep Logs (Expanded to 1000 for total historical control)
   const fetchSleepLogs = async () => {
     isLoading.value = true;
     error.value = null;
     try {
-      const { data, error: sbError } = await supabase
-        .from('sleep_logs')
-        .select('*')
-        .order('started_at', { ascending: false })
-        .limit(1000);
+      const data = await executeWithRetry(async () => {
+        const { data: resData, error: sbError } = await supabase
+          .from('sleep_logs')
+          .select('*')
+          .order('started_at', { ascending: false })
+          .limit(1000);
 
-      if (sbError) throw sbError;
+        if (sbError) throw sbError;
+        return resData;
+      });
+
       sleepLogs.value = (data as SleepLog[]) || [];
     } catch (err: any) {
       console.error('Error fetching sleep logs:', err);
-      error.value = err.message || 'Error al cargar registros de sueño';
+      error.value = sanitizeTrackerError(err, 'Error al cargar registros de sueño');
     } finally {
       isLoading.value = false;
     }
@@ -126,7 +201,8 @@ export const useSleepTracker = () => {
       isActive: true,
       isPaused: false,
       startedAt: new Date(now).toISOString(),
-      lastTickTime: now,
+      segmentStartedAt: now,
+      baseSeconds: 0,
       elapsedSeconds: 0,
       notes: ''
     };
@@ -136,25 +212,25 @@ export const useSleepTracker = () => {
 
   // 4. Pause Sleep Session
   const pauseSleepSession = () => {
-    if (!activeSession.value.isActive) return;
-    if (activeSession.value.lastTickTime) {
-      const now = Date.now();
-      const delta = Math.floor((now - activeSession.value.lastTickTime) / 1000);
-      if (delta > 0) {
-        activeSession.value.elapsedSeconds += delta;
-      }
+    if (!activeSession.value.isActive || activeSession.value.isPaused) return;
+    const now = Date.now();
+    if (activeSession.value.segmentStartedAt) {
+      const currentSegment = Math.max(0, Math.floor((now - activeSession.value.segmentStartedAt) / 1000));
+      activeSession.value.baseSeconds = (activeSession.value.baseSeconds || 0) + currentSegment;
     }
     activeSession.value.isPaused = true;
-    activeSession.value.lastTickTime = null;
+    activeSession.value.segmentStartedAt = null;
+    activeSession.value.elapsedSeconds = activeSession.value.baseSeconds || 0;
     stopTimerTicker();
     saveToStorage();
   };
 
   // 5. Resume Sleep Session
   const resumeSleepSession = () => {
-    if (!activeSession.value.isActive) return;
+    if (!activeSession.value.isActive || !activeSession.value.isPaused) return;
+    const now = Date.now();
     activeSession.value.isPaused = false;
-    activeSession.value.lastTickTime = Date.now();
+    activeSession.value.segmentStartedAt = now;
     saveToStorage();
     startTimerTicker();
   };
@@ -163,13 +239,15 @@ export const useSleepTracker = () => {
   const finishSleepSession = async () => {
     if (!activeSession.value.isActive || !activeSession.value.startedAt) return;
 
+    reconcileElapsed();
+    const totalDuration = activeSession.value.elapsedSeconds;
     pauseSleepSession();
 
     const endedAt = new Date().toISOString();
     const payload: CreateSleepDTO = {
       started_at: activeSession.value.startedAt,
       ended_at: endedAt,
-      duration_seconds: activeSession.value.elapsedSeconds,
+      duration_seconds: totalDuration,
       notes: activeSession.value.notes?.trim() || null
     };
 
@@ -184,7 +262,8 @@ export const useSleepTracker = () => {
       isActive: false,
       isPaused: false,
       startedAt: null,
-      lastTickTime: null,
+      segmentStartedAt: null,
+      baseSeconds: 0,
       elapsedSeconds: 0,
       notes: ''
     };

@@ -9,28 +9,66 @@ const error = ref<string | null>(null);
 export const useMedicationTracker = () => {
   const supabase = useSupabaseClient();
 
+  // Helper to execute Supabase async queries with automatic clock-skew retry
+  const executeWithRetry = async <T>(fn: () => Promise<T>, retries = 2, delayMs = 1200): Promise<T> => {
+    try {
+      return await fn();
+    } catch (err: any) {
+      const msg = (err?.message || '').toLowerCase();
+      const isClockOrJwtIssue =
+        msg.includes('jwt') ||
+        msg.includes('future') ||
+        msg.includes('invalid_grant') ||
+        msg.includes('not yet valid') ||
+        msg.includes('network') ||
+        msg.includes('fetch');
+
+      if (retries > 0 && isClockOrJwtIssue) {
+        await new Promise(resolve => setTimeout(resolve, delayMs));
+        return executeWithRetry(fn, retries - 1, delayMs);
+      }
+      throw err;
+    }
+  };
+
+  const sanitizeTrackerError = (err: any, fallback: string): string => {
+    if (!err) return fallback;
+    const msg = (err.message || '').toLowerCase();
+    if (msg.includes('jwt') || msg.includes('future') || msg.includes('not yet valid')) {
+      return 'Sincronizando sesión segura...';
+    }
+    if (msg.includes('network') || msg.includes('fetch')) {
+      return 'Sin conexión con el servidor. Reintentando...';
+    }
+    return err.message || fallback;
+  };
+
   // 1. Fetch Medications and compute their last administered status
   const fetchMedications = async () => {
     isLoading.value = true;
     error.value = null;
     try {
-      // Fetch active medications
-      const { data: medsData, error: medsError } = await supabase
-        .from('medications')
-        .select('*')
-        .eq('is_active', true)
-        .order('created_at', { ascending: true });
+      const { medsData, logsData } = await executeWithRetry(async () => {
+        // Fetch active medications
+        const { data: mData, error: medsError } = await supabase
+          .from('medications')
+          .select('*')
+          .eq('is_active', true)
+          .order('created_at', { ascending: true });
 
-      if (medsError) throw medsError;
+        if (medsError) throw medsError;
 
-      // Fetch logs
-      const { data: logsData, error: logsError } = await supabase
-        .from('medication_logs')
-        .select('*')
-        .order('administered_at', { ascending: false })
-        .limit(100);
+        // Fetch logs
+        const { data: lData, error: logsError } = await supabase
+          .from('medication_logs')
+          .select('*')
+          .order('administered_at', { ascending: false })
+          .limit(100);
 
-      if (logsError) throw logsError;
+        if (logsError) throw logsError;
+
+        return { medsData: mData, logsData: lData };
+      });
 
       recentLogs.value = (logsData as MedicationLog[]) || [];
       const rawMeds = (medsData as Medication[]) || [];
@@ -64,7 +102,7 @@ export const useMedicationTracker = () => {
       });
     } catch (err: any) {
       console.error('Error fetching medications:', err);
-      error.value = err.message || 'Error al cargar medicación';
+      error.value = sanitizeTrackerError(err, 'Error al cargar las medicaciones');
     } finally {
       isLoading.value = false;
     }

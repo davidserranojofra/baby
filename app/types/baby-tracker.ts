@@ -100,7 +100,12 @@ export interface ActiveFeedingSession {
   feedingType: FeedingType;
   activeSide: ActiveFeedingSide;
   startedAt: string | null;
-  sideStartedAt: number | null;
+  segmentStartedAt?: number | null;
+  sideStartedAt?: number | null; // legacy fallback
+  baseLeftSeconds?: number;
+  baseRightSeconds?: number;
+  baseBottleMaternalSeconds?: number;
+  baseBottleFormulaSeconds?: number;
   leftSeconds: number;
   rightSeconds: number;
   bottleMaternalSeconds: number;
@@ -138,7 +143,9 @@ export interface ActiveSleepSession {
   isActive: boolean;
   isPaused: boolean;
   startedAt: string | null;
-  lastTickTime: number | null;
+  segmentStartedAt?: number | null;
+  lastTickTime?: number | null; // legacy fallback
+  baseSeconds?: number;
   elapsedSeconds: number;
   notes: string;
 }

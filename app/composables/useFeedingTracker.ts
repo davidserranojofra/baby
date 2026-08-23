@@ -18,7 +18,11 @@ const activeSession = ref<ActiveFeedingSession>({
   feedingType: 'breast',
   activeSide: null,
   startedAt: null,
-  sideStartedAt: null,
+  segmentStartedAt: null,
+  baseLeftSeconds: 0,
+  baseRightSeconds: 0,
+  baseBottleMaternalSeconds: 0,
+  baseBottleFormulaSeconds: 0,
   leftSeconds: 0,
   rightSeconds: 0,
   bottleMaternalSeconds: 0,
@@ -31,6 +35,7 @@ const activeSession = ref<ActiveFeedingSession>({
 });
 
 let timerInterval: ReturnType<typeof setInterval> | null = null;
+let isFeedingListenersInitialized = false;
 
 const STORAGE_KEY = 'baby_active_feeding_session';
 
@@ -46,29 +51,39 @@ const saveToStorage = () => {
 export const useFeedingTracker = () => {
   const supabase = useSupabaseClient();
 
-  // Helper to accumulate active delta seconds
-  const flushCurrentDelta = () => {
-    if (!activeSession.value.isActive || !activeSession.value.activeSide || !activeSession.value.sideStartedAt) {
-      return;
-    }
-    const now = Date.now();
-    const delta = Math.floor((now - activeSession.value.sideStartedAt) / 1000);
-    if (delta > 0) {
-      const side = activeSession.value.activeSide;
-      if (side === 'left') activeSession.value.leftSeconds += delta;
-      else if (side === 'right') activeSession.value.rightSeconds += delta;
-      else if (side === 'bottle_maternal') activeSession.value.bottleMaternalSeconds += delta;
-      else if (side === 'bottle_formula') activeSession.value.bottleFormulaSeconds += delta;
-      activeSession.value.sideStartedAt = now;
-      saveToStorage();
-    }
+  // 1. Live Wall-Clock Reconciler (Anchor + Offset Ground Truth)
+  const reconcileElapsed = (now = Date.now()) => {
+    if (!activeSession.value.isActive) return;
+    const side = activeSession.value.activeSide;
+    const segStart = activeSession.value.segmentStartedAt;
+    const currentSegment = (side && segStart) ? Math.max(0, Math.floor((now - segStart) / 1000)) : 0;
+
+    activeSession.value.leftSeconds = (activeSession.value.baseLeftSeconds || 0) + (side === 'left' ? currentSegment : 0);
+    activeSession.value.rightSeconds = (activeSession.value.baseRightSeconds || 0) + (side === 'right' ? currentSegment : 0);
+    activeSession.value.bottleMaternalSeconds = (activeSession.value.baseBottleMaternalSeconds || 0) + (side === 'bottle_maternal' ? currentSegment : 0);
+    activeSession.value.bottleFormulaSeconds = (activeSession.value.baseBottleFormulaSeconds || 0) + (side === 'bottle_formula' ? currentSegment : 0);
   };
 
-  // 1. Live Stopwatch Tick Logic
+  const lockCurrentSegmentToBase = (now = Date.now()) => {
+    if (!activeSession.value.isActive) return;
+    const side = activeSession.value.activeSide;
+    const segStart = activeSession.value.segmentStartedAt;
+    if (side && segStart) {
+      const currentSegment = Math.max(0, Math.floor((now - segStart) / 1000));
+      if (side === 'left') activeSession.value.baseLeftSeconds = (activeSession.value.baseLeftSeconds || 0) + currentSegment;
+      else if (side === 'right') activeSession.value.baseRightSeconds = (activeSession.value.baseRightSeconds || 0) + currentSegment;
+      else if (side === 'bottle_maternal') activeSession.value.baseBottleMaternalSeconds = (activeSession.value.baseBottleMaternalSeconds || 0) + currentSegment;
+      else if (side === 'bottle_formula') activeSession.value.baseBottleFormulaSeconds = (activeSession.value.baseBottleFormulaSeconds || 0) + currentSegment;
+    }
+    activeSession.value.segmentStartedAt = null;
+    reconcileElapsed(now);
+  };
+
   const startTimerTicker = () => {
     if (timerInterval) clearInterval(timerInterval);
+    reconcileElapsed();
     timerInterval = setInterval(() => {
-      flushCurrentDelta();
+      reconcileElapsed();
     }, 1000);
   };
 
@@ -86,17 +101,16 @@ export const useFeedingTracker = () => {
       if (raw) {
         const saved = JSON.parse(raw) as ActiveFeedingSession;
         if (saved && saved.isActive) {
-          if (saved.activeSide && saved.sideStartedAt) {
-            const delta = Math.floor((Date.now() - saved.sideStartedAt) / 1000);
-            if (delta > 0) {
-              if (saved.activeSide === 'left') saved.leftSeconds += delta;
-              else if (saved.activeSide === 'right') saved.rightSeconds += delta;
-              else if (saved.activeSide === 'bottle_maternal') saved.bottleMaternalSeconds += delta;
-              else if (saved.activeSide === 'bottle_formula') saved.bottleFormulaSeconds += delta;
-            }
-            saved.sideStartedAt = Date.now();
+          // Backward-compatible migration from legacy schema if needed
+          if (saved.baseLeftSeconds === undefined) {
+            saved.baseLeftSeconds = saved.leftSeconds || 0;
+            saved.baseRightSeconds = saved.rightSeconds || 0;
+            saved.baseBottleMaternalSeconds = saved.bottleMaternalSeconds || 0;
+            saved.baseBottleFormulaSeconds = saved.bottleFormulaSeconds || 0;
+            saved.segmentStartedAt = saved.activeSide ? (saved.sideStartedAt || Date.now()) : null;
           }
           activeSession.value = saved;
+          reconcileElapsed();
           if (saved.activeSide) {
             startTimerTicker();
           }
@@ -107,22 +121,94 @@ export const useFeedingTracker = () => {
     }
   };
 
+  // Register resilient foreground/lifecycle sync listeners once
+  const setupLifecycleListeners = () => {
+    if (typeof window === 'undefined' || isFeedingListenersInitialized) return;
+    isFeedingListenersInitialized = true;
+
+    const onWake = () => {
+      restoreFromStorage();
+      reconcileElapsed();
+    };
+
+    document.addEventListener('visibilitychange', () => {
+      if (document.visibilityState === 'visible') {
+        onWake();
+      } else {
+        saveToStorage();
+      }
+    });
+
+    window.addEventListener('pageshow', onWake);
+    window.addEventListener('focus', onWake);
+    window.addEventListener('storage', (e) => {
+      if (e.key === STORAGE_KEY) {
+        restoreFromStorage();
+      }
+    });
+    window.addEventListener('beforeunload', () => {
+      saveToStorage();
+    });
+  };
+
+  if (typeof window !== 'undefined') {
+    setupLifecycleListeners();
+  }
+
+  // Helper to execute Supabase async queries with automatic clock-skew retry
+  const executeWithRetry = async <T>(fn: () => Promise<T>, retries = 2, delayMs = 1200): Promise<T> => {
+    try {
+      return await fn();
+    } catch (err: any) {
+      const msg = (err?.message || '').toLowerCase();
+      const isClockOrJwtIssue =
+        msg.includes('jwt') ||
+        msg.includes('future') ||
+        msg.includes('invalid_grant') ||
+        msg.includes('not yet valid') ||
+        msg.includes('network') ||
+        msg.includes('fetch');
+
+      if (retries > 0 && isClockOrJwtIssue) {
+        await new Promise(resolve => setTimeout(resolve, delayMs));
+        return executeWithRetry(fn, retries - 1, delayMs);
+      }
+      throw err;
+    }
+  };
+
+  const sanitizeTrackerError = (err: any, fallback: string): string => {
+    if (!err) return fallback;
+    const msg = (err.message || '').toLowerCase();
+    if (msg.includes('jwt') || msg.includes('future') || msg.includes('not yet valid')) {
+      return 'Sincronizando sesión segura...';
+    }
+    if (msg.includes('network') || msg.includes('fetch')) {
+      return 'Sin conexión con el servidor. Reintentando...';
+    }
+    return err.message || fallback;
+  };
+
   // 2. Fetch Feedings (Expanded to 1000 for total historical control)
   const fetchFeedings = async () => {
     isLoading.value = true;
     error.value = null;
     try {
-      const { data, error: sbError } = await supabase
-        .from('feedings')
-        .select('*')
-        .order('started_at', { ascending: false })
-        .limit(1000);
+      const data = await executeWithRetry(async () => {
+        const { data: resData, error: sbError } = await supabase
+          .from('feedings')
+          .select('*')
+          .order('started_at', { ascending: false })
+          .limit(1000);
 
-      if (sbError) throw sbError;
+        if (sbError) throw sbError;
+        return resData;
+      });
+
       feedings.value = (data as Feeding[]) || [];
     } catch (err: any) {
       console.error('Error fetching feedings:', err);
-      error.value = err.message || 'Error al cargar las tomas';
+      error.value = sanitizeTrackerError(err, 'Error al cargar las tomas');
     } finally {
       isLoading.value = false;
     }
@@ -136,7 +222,11 @@ export const useFeedingTracker = () => {
       feedingType: 'breast',
       activeSide: side,
       startedAt: new Date(now).toISOString(),
-      sideStartedAt: now,
+      segmentStartedAt: now,
+      baseLeftSeconds: 0,
+      baseRightSeconds: 0,
+      baseBottleMaternalSeconds: 0,
+      baseBottleFormulaSeconds: 0,
       leftSeconds: 0,
       rightSeconds: 0,
       bottleMaternalSeconds: 0,
@@ -160,7 +250,11 @@ export const useFeedingTracker = () => {
       feedingType: 'bottle',
       activeSide: side,
       startedAt: new Date(now).toISOString(),
-      sideStartedAt: now,
+      segmentStartedAt: now,
+      baseLeftSeconds: 0,
+      baseRightSeconds: 0,
+      baseBottleMaternalSeconds: 0,
+      baseBottleFormulaSeconds: 0,
       leftSeconds: 0,
       rightSeconds: 0,
       bottleMaternalSeconds: 0,
@@ -179,15 +273,15 @@ export const useFeedingTracker = () => {
   const switchSideOrType = (target: ActiveFeedingSide) => {
     if (!activeSession.value.isActive) return;
 
-    flushCurrentDelta();
-
     const now = Date.now();
+    lockCurrentSegmentToBase(now);
+
     activeSession.value.activeSide = target;
-    activeSession.value.sideStartedAt = target ? now : null;
+    activeSession.value.segmentStartedAt = target ? now : null;
 
     // Detect if session is becoming mixed
-    const hasBreast = activeSession.value.leftSeconds > 0 || activeSession.value.rightSeconds > 0 || target === 'left' || target === 'right';
-    const hasBottle = activeSession.value.bottleMaternalSeconds > 0 || activeSession.value.bottleFormulaSeconds > 0 || target === 'bottle_maternal' || target === 'bottle_formula';
+    const hasBreast = (activeSession.value.baseLeftSeconds || 0) > 0 || (activeSession.value.baseRightSeconds || 0) > 0 || target === 'left' || target === 'right';
+    const hasBottle = (activeSession.value.baseBottleMaternalSeconds || 0) > 0 || (activeSession.value.baseBottleFormulaSeconds || 0) > 0 || target === 'bottle_maternal' || target === 'bottle_formula';
     
     if (hasBreast && hasBottle) {
       activeSession.value.feedingType = 'mixed';
@@ -213,7 +307,7 @@ export const useFeedingTracker = () => {
   // 7. Resume Active Session with specific side or default
   const resumeActiveSession = (side?: ActiveFeedingSide) => {
     if (!activeSession.value.isActive) return;
-    const defaultSide = side || (activeSession.value.leftSeconds >= activeSession.value.rightSeconds ? 'right' : 'left');
+    const defaultSide = side || activeSession.value.activeSide || (activeSession.value.leftSeconds >= activeSession.value.rightSeconds ? 'right' : 'left');
     switchSideOrType(defaultSide);
   };
 
@@ -234,7 +328,9 @@ export const useFeedingTracker = () => {
   const finishActiveSession = async () => {
     if (!activeSession.value.isActive || !activeSession.value.startedAt) return;
 
-    pauseActiveSession();
+    const now = Date.now();
+    lockCurrentSegmentToBase(now);
+    stopTimerTicker();
 
     const {
       leftSeconds,
@@ -298,7 +394,11 @@ export const useFeedingTracker = () => {
       feedingType: 'breast',
       activeSide: null,
       startedAt: null,
-      sideStartedAt: null,
+      segmentStartedAt: null,
+      baseLeftSeconds: 0,
+      baseRightSeconds: 0,
+      baseBottleMaternalSeconds: 0,
+      baseBottleFormulaSeconds: 0,
       leftSeconds: 0,
       rightSeconds: 0,
       bottleMaternalSeconds: 0,

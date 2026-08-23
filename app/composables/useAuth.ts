@@ -31,6 +31,9 @@ export const useAuth = () => {
     if (msg.includes('NetworkError') || msg.includes('fetch')) {
       return 'Error de conexión con el servidor. Comprobá tu acceso a internet.';
     }
+    if (msg.includes('jwt') || msg.includes('future') || msg.includes('not yet valid')) {
+      return 'Sincronizando sesión segura. Si persiste, verificá la hora automática de tu dispositivo.';
+    }
 
     return msg || 'No se pudo completar la operación. Por favor reintentá.';
   };
