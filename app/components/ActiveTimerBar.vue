@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed } from 'vue';
-import { Moon, Baby, Play, Pause, Check, Maximize2, Sparkles, ArrowRightLeft } from 'lucide-vue-next';
-import type { ActiveSleepSession, ActiveFeedingSession } from '~/types/baby-tracker';
+import { Moon, Baby, Milk, Play, Pause, Check, Maximize2, Sparkles, ArrowRightLeft } from 'lucide-vue-next';
+import type { ActiveSleepSession, ActiveFeedingSession, ActiveFeedingSide } from '~/types/baby-tracker';
 
 const props = defineProps<{
   sleepSession?: ActiveSleepSession;
@@ -17,7 +17,8 @@ const emit = defineEmits<{
   (e: 'resume-sleep'): void;
   (e: 'finish-sleep'): void;
   (e: 'pause-feeding'): void;
-  (e: 'resume-feeding', side: 'left' | 'right'): void;
+  (e: 'resume-feeding', mode?: ActiveFeedingSide): void;
+  (e: 'switch-feeding-mode', mode: ActiveFeedingSide): void;
   (e: 'switch-feeding-side', side: 'left' | 'right'): void;
   (e: 'finish-feeding'): void;
 }>();
@@ -35,7 +36,23 @@ const formatDuration = (sec: number) => {
 
 const totalFeedingSeconds = computed(() => {
   if (!props.feedingSession) return 0;
-  return props.feedingSession.leftSeconds + props.feedingSession.rightSeconds;
+  return (
+    props.feedingSession.leftSeconds +
+    props.feedingSession.rightSeconds +
+    (props.feedingSession.bottleMaternalSeconds || 0) +
+    (props.feedingSession.bottleFormulaSeconds || 0)
+  );
+});
+
+const feedingTitle = computed(() => {
+  if (!props.feedingSession || !props.feedingSession.activeSide) return 'Toma pausada';
+  switch (props.feedingSession.activeSide) {
+    case 'left': return 'Pecho Izquierdo';
+    case 'right': return 'Pecho Derecho';
+    case 'bottle_maternal': return 'Biberón Materna';
+    case 'bottle_formula': return 'Biberón Fórmula';
+    default: return 'Toma en curso';
+  }
 });
 
 const isSleepActive = computed(() => !!props.sleepSession?.isActive);
@@ -129,7 +146,13 @@ const hasAnyActive = computed(() => isSleepActive.value || isFeedingActive.value
     <div
       v-if="isFeedingActive && feedingSession"
       class="pointer-events-auto w-full bg-surface/95 dark:bg-surface/95 backdrop-blur-md border border-borderSubtle rounded-2xl p-2.5 shadow-soft-lg flex items-center justify-between gap-3 animate-in slide-in-from-bottom-3 duration-200 transition-all"
-      :class="feedingSession.activeSide === 'left' ? 'border-breastLeft-border/80 hover:border-breastLeft' : feedingSession.activeSide === 'right' ? 'border-breastRight-border/80 hover:border-breastRight' : 'border-warningSoft-border'"
+      :class="{
+        'border-breastLeft-border/80 hover:border-breastLeft': feedingSession.activeSide === 'left',
+        'border-breastRight-border/80 hover:border-breastRight': feedingSession.activeSide === 'right',
+        'border-bottle-border/80 hover:border-bottle': feedingSession.activeSide === 'bottle_maternal',
+        'border-warningSoft-border/80 hover:border-warningSoft': feedingSession.activeSide === 'bottle_formula',
+        'border-borderSubtle': !feedingSession.activeSide
+      }"
     >
       <!-- Clickable Area to Expand -->
       <div 
@@ -139,19 +162,33 @@ const hasAnyActive = computed(() => isSleepActive.value || isFeedingActive.value
       >
         <div 
           class="w-9 h-9 rounded-xl flex items-center justify-center flex-shrink-0 relative transition-colors"
-          :class="feedingSession.activeSide === 'left' ? 'bg-breastLeft-soft text-breastLeft' : feedingSession.activeSide === 'right' ? 'bg-breastRight-soft text-breastRight' : 'bg-subtle text-mutedText'"
+          :class="{
+            'bg-breastLeft-soft text-breastLeft': feedingSession.activeSide === 'left',
+            'bg-breastRight-soft text-breastRight': feedingSession.activeSide === 'right',
+            'bg-bottle-soft text-bottle': feedingSession.activeSide === 'bottle_maternal',
+            'bg-warningSoft-soft text-warningSoft': feedingSession.activeSide === 'bottle_formula',
+            'bg-subtle text-mutedText': !feedingSession.activeSide
+          }"
         >
-          <Baby class="w-4 h-4" />
+          <Baby v-if="feedingSession.activeSide === 'left' || feedingSession.activeSide === 'right'" class="w-4 h-4" />
+          <Milk v-else-if="feedingSession.activeSide === 'bottle_maternal' || feedingSession.activeSide === 'bottle_formula'" class="w-4 h-4" />
+          <Baby v-else class="w-4 h-4" />
+
           <span 
             v-if="feedingSession.activeSide" 
             class="absolute -top-0.5 -right-0.5 w-2.5 h-2.5 rounded-full ring-2 ring-surface animate-pulse"
-            :class="feedingSession.activeSide === 'left' ? 'bg-breastLeft' : 'bg-breastRight'" 
+            :class="{
+              'bg-breastLeft': feedingSession.activeSide === 'left',
+              'bg-breastRight': feedingSession.activeSide === 'right',
+              'bg-bottle': feedingSession.activeSide === 'bottle_maternal',
+              'bg-warningSoft': feedingSession.activeSide === 'bottle_formula'
+            }" 
           />
         </div>
         <div class="min-w-0 flex-1">
           <div class="flex items-center gap-1.5">
             <span class="text-xs font-bold text-primaryText truncate">
-              {{ feedingSession.activeSide === 'left' ? 'Pecho Izquierdo' : feedingSession.activeSide === 'right' ? 'Pecho Derecho' : 'Toma pausada' }}
+              {{ feedingTitle }}
             </span>
             <span 
               v-if="!feedingSession.activeSide" 
@@ -164,8 +201,8 @@ const hasAnyActive = computed(() => isSleepActive.value || isFeedingActive.value
             <span class="text-sm font-black font-mono tracking-tight text-primaryText tabular-nums">
               {{ formatDuration(totalFeedingSeconds) }}
             </span>
-            <span class="text-[10px] text-mutedText font-mono">
-              (I: {{ formatDuration(feedingSession.leftSeconds) }} · D: {{ formatDuration(feedingSession.rightSeconds) }})
+            <span class="text-[10px] text-mutedText flex items-center gap-0.5">
+              <Maximize2 class="w-2.5 h-2.5" /> Ampliar
             </span>
           </div>
         </div>
@@ -173,17 +210,6 @@ const hasAnyActive = computed(() => isSleepActive.value || isFeedingActive.value
 
       <!-- Quick Action Controls -->
       <div class="flex items-center gap-1.5 flex-shrink-0">
-        <!-- Switch side button if active -->
-        <button
-          type="button"
-          v-if="feedingSession.activeSide"
-          @click.stop="emit('switch-feeding-side', feedingSession.activeSide === 'left' ? 'right' : 'left')"
-          class="p-2 rounded-xl bg-subtle hover:bg-borderSubtle text-secondaryText hover:text-primaryText transition-all active:scale-95 border border-borderSubtle"
-          :title="feedingSession.activeSide === 'left' ? 'Cambiar a Pecho Derecho' : 'Cambiar a Pecho Izquierdo'"
-        >
-          <ArrowRightLeft class="w-3.5 h-3.5" />
-        </button>
-
         <!-- Pause / Resume Button -->
         <button
           type="button"
@@ -197,7 +223,7 @@ const hasAnyActive = computed(() => isSleepActive.value || isFeedingActive.value
         <button
           type="button"
           v-else
-          @click.stop="emit('resume-feeding', feedingSession.leftSeconds >= feedingSession.rightSeconds ? 'right' : 'left')"
+          @click.stop="emit('resume-feeding', 'left')"
           class="p-2 rounded-xl bg-subtle hover:bg-borderSubtle text-primaryText transition-all active:scale-95 border border-borderSubtle"
           title="Reanudar toma"
         >
@@ -220,3 +246,4 @@ const hasAnyActive = computed(() => isSleepActive.value || isFeedingActive.value
 
   </div>
 </template>
+

@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { ref, computed, onMounted, onUnmounted } from 'vue';
-import { Clock, Play, Pause, Plus, Baby, Sparkles, ArrowRightLeft, Check, Maximize2 } from 'lucide-vue-next';
-import type { Feeding, ActiveFeedingSession } from '~/types/baby-tracker';
+import { Clock, Play, Pause, Plus, Baby, Sparkles, ArrowRightLeft, Check, Maximize2, Milk, Droplets } from 'lucide-vue-next';
+import type { Feeding, ActiveFeedingSession, ActiveFeedingSide, BottleMilkType } from '~/types/baby-tracker';
 
 const props = defineProps<{
   lastFeeding: Feeding | null;
@@ -11,11 +11,13 @@ const props = defineProps<{
 
 const emit = defineEmits<{
   (e: 'start-breast', side: 'left' | 'right'): void;
+  (e: 'start-bottle', milkType: 'maternal' | 'formula'): void;
   (e: 'open-manual'): void;
   (e: 'open-active-modal'): void;
   (e: 'switch-side', side: 'left' | 'right'): void;
+  (e: 'switch-mode', mode: ActiveFeedingSide): void;
   (e: 'pause-feeding'): void;
-  (e: 'resume-feeding', side: 'left' | 'right'): void;
+  (e: 'resume-feeding', mode?: ActiveFeedingSide): void;
   (e: 'finish-feeding'): void;
 }>();
 
@@ -61,13 +63,35 @@ const formatSeconds = (sec: number) => {
 
 const totalFeedingSeconds = computed(() => {
   if (!props.activeSession) return 0;
-  return props.activeSession.leftSeconds + props.activeSession.rightSeconds;
+  return (
+    props.activeSession.leftSeconds +
+    props.activeSession.rightSeconds +
+    (props.activeSession.bottleMaternalSeconds || 0) +
+    (props.activeSession.bottleFormulaSeconds || 0)
+  );
+});
+
+const activeModeTitle = computed(() => {
+  if (!props.activeSession || !props.activeSession.activeSide) return 'Toma en Pausa';
+  switch (props.activeSession.activeSide) {
+    case 'left': return 'Pecho Izquierdo Activo';
+    case 'right': return 'Pecho Derecho Activo';
+    case 'bottle_maternal': return 'Biberón Materna Activo';
+    case 'bottle_formula': return 'Biberón Fórmula Activo';
+    default: return 'Toma en Curso';
+  }
 });
 
 const lastFeedingLabel = computed(() => {
   if (!props.lastFeeding) return 'Sin registros previos';
-  if (props.lastFeeding.feeding_type === 'bottle') {
-    return `Biberón (${props.lastFeeding.amount_ml || 0} ml)`;
+  const notes = props.lastFeeding.notes || '';
+  if (notes.includes('Combinada')) {
+    return 'Toma Combinada (Pecho + Bib.)';
+  }
+  if (props.lastFeeding.feeding_type === 'bottle' || props.lastFeeding.amount_ml) {
+    const isMaternal = notes.includes('Materna');
+    const typeStr = isMaternal ? 'Bib. Materna' : 'Bib. Fórmula';
+    return `${typeStr} (${props.lastFeeding.amount_ml || 0} ml)`;
   }
   if (props.lastFeeding.breast_side === 'left') return 'Pecho Izquierdo';
   if (props.lastFeeding.breast_side === 'right') return 'Pecho Derecho';
@@ -93,19 +117,33 @@ const nextSuggestedBreast = computed<'left' | 'right' | null>(() => {
         <div class="flex items-center gap-2">
           <div 
             class="w-8 h-8 rounded-xl flex items-center justify-center relative transition-colors"
-            :class="activeSession.activeSide === 'left' ? 'bg-breastLeft-soft text-breastLeft' : activeSession.activeSide === 'right' ? 'bg-breastRight-soft text-breastRight' : 'bg-subtle text-mutedText'"
+            :class="{
+              'bg-breastLeft-soft text-breastLeft': activeSession.activeSide === 'left',
+              'bg-breastRight-soft text-breastRight': activeSession.activeSide === 'right',
+              'bg-bottle-soft text-bottle': activeSession.activeSide === 'bottle_maternal',
+              'bg-warningSoft-soft text-warningSoft': activeSession.activeSide === 'bottle_formula',
+              'bg-subtle text-mutedText': !activeSession.activeSide
+            }"
           >
-            <Baby class="w-4 h-4" />
+            <Baby v-if="activeSession.activeSide === 'left' || activeSession.activeSide === 'right'" class="w-4 h-4" />
+            <Milk v-else-if="activeSession.activeSide === 'bottle_maternal' || activeSession.activeSide === 'bottle_formula'" class="w-4 h-4" />
+            <Baby v-else class="w-4 h-4" />
+            
             <span 
               v-if="activeSession.activeSide" 
               class="absolute -top-0.5 -right-0.5 w-2.5 h-2.5 rounded-full ring-2 ring-surface animate-pulse"
-              :class="activeSession.activeSide === 'left' ? 'bg-breastLeft' : 'bg-breastRight'" 
+              :class="{
+                'bg-breastLeft': activeSession.activeSide === 'left',
+                'bg-breastRight': activeSession.activeSide === 'right',
+                'bg-bottle': activeSession.activeSide === 'bottle_maternal',
+                'bg-warningSoft': activeSession.activeSide === 'bottle_formula'
+              }" 
             />
           </div>
           <div>
             <h2 class="text-xs font-bold uppercase tracking-wider text-primaryText">Toma en Curso</h2>
             <p class="text-sm font-extrabold text-primaryText">
-              {{ activeSession.activeSide === 'left' ? 'Pecho Izquierdo Activo' : activeSession.activeSide === 'right' ? 'Pecho Derecho Activo' : 'Toma en Pausa' }}
+              {{ activeModeTitle }}
             </p>
           </div>
         </div>
@@ -121,7 +159,7 @@ const nextSuggestedBreast = computed<'left' | 'right' | null>(() => {
         </button>
       </div>
 
-      <!-- Live Dual Durations Card -->
+      <!-- Live Total Duration Clock -->
       <div class="py-4 px-3 bg-subtle rounded-2xl border border-borderSubtle">
         <div class="text-center mb-3">
           <span class="text-[11px] font-semibold text-mutedText uppercase tracking-wider block">Duración Total</span>
@@ -130,32 +168,61 @@ const nextSuggestedBreast = computed<'left' | 'right' | null>(() => {
           </span>
         </div>
 
-        <div class="grid grid-cols-2 gap-2.5">
-          <!-- Left Breast Mini Status -->
+        <!-- 4 Modes Multi-Status Grid -->
+        <div class="grid grid-cols-2 gap-2">
+          <!-- Left Breast -->
           <button
             type="button"
-            @click="activeSession.activeSide === 'left' ? emit('pause-feeding') : emit('switch-side', 'left')"
+            @click="activeSession.activeSide === 'left' ? emit('pause-feeding') : emit('switch-mode', 'left')"
             class="p-2.5 rounded-xl border text-center transition-all active:scale-[0.98]"
             :class="activeSession.activeSide === 'left' ? 'bg-breastLeft-soft border-breastLeft text-breastLeft ring-2 ring-breastLeft/30' : 'bg-surface border-borderSubtle text-mutedText hover:border-breastLeft-border'"
           >
-            <span class="text-[10px] font-bold uppercase tracking-wider block">Izq.</span>
-            <span class="text-lg font-black font-mono tabular-nums block mt-0.5 text-primaryText">{{ formatSeconds(activeSession.leftSeconds) }}</span>
+            <span class="text-[10px] font-bold uppercase tracking-wider block">Pecho Izq.</span>
+            <span class="text-base font-black font-mono tabular-nums block mt-0.5 text-primaryText">{{ formatSeconds(activeSession.leftSeconds) }}</span>
             <span class="text-[9px] font-semibold block mt-0.5" :class="activeSession.activeSide === 'left' ? 'text-breastLeft' : 'text-mutedText'">
-              {{ activeSession.activeSide === 'left' ? 'Activo' : 'Tocar para activar' }}
+              {{ activeSession.activeSide === 'left' ? '● Activo' : 'Tocar para activar' }}
             </span>
           </button>
 
-          <!-- Right Breast Mini Status -->
+          <!-- Right Breast -->
           <button
             type="button"
-            @click="activeSession.activeSide === 'right' ? emit('pause-feeding') : emit('switch-side', 'right')"
+            @click="activeSession.activeSide === 'right' ? emit('pause-feeding') : emit('switch-mode', 'right')"
             class="p-2.5 rounded-xl border text-center transition-all active:scale-[0.98]"
             :class="activeSession.activeSide === 'right' ? 'bg-breastRight-soft border-breastRight text-breastRight ring-2 ring-breastRight/30' : 'bg-surface border-borderSubtle text-mutedText hover:border-breastRight-border'"
           >
-            <span class="text-[10px] font-bold uppercase tracking-wider block">Der.</span>
-            <span class="text-lg font-black font-mono tabular-nums block mt-0.5 text-primaryText">{{ formatSeconds(activeSession.rightSeconds) }}</span>
+            <span class="text-[10px] font-bold uppercase tracking-wider block">Pecho Der.</span>
+            <span class="text-base font-black font-mono tabular-nums block mt-0.5 text-primaryText">{{ formatSeconds(activeSession.rightSeconds) }}</span>
             <span class="text-[9px] font-semibold block mt-0.5" :class="activeSession.activeSide === 'right' ? 'text-breastRight' : 'text-mutedText'">
-              {{ activeSession.activeSide === 'right' ? 'Activo' : 'Tocar para activar' }}
+              {{ activeSession.activeSide === 'right' ? '● Activo' : 'Tocar para activar' }}
+            </span>
+          </button>
+
+          <!-- Bottle Maternal -->
+          <button
+            type="button"
+            @click="activeSession.activeSide === 'bottle_maternal' ? emit('pause-feeding') : emit('switch-mode', 'bottle_maternal')"
+            class="p-2.5 rounded-xl border text-center transition-all active:scale-[0.98]"
+            :class="activeSession.activeSide === 'bottle_maternal' ? 'bg-bottle-soft border-bottle text-bottle ring-2 ring-bottle/30' : 'bg-surface border-borderSubtle text-mutedText hover:border-bottle-border'"
+          >
+            <span class="text-[10px] font-bold uppercase tracking-wider block">Bib. Materna</span>
+            <span class="text-base font-black font-mono tabular-nums block mt-0.5 text-primaryText">{{ formatSeconds(activeSession.bottleMaternalSeconds || 0) }}</span>
+            <span class="text-[9px] font-semibold block mt-0.5" :class="activeSession.activeSide === 'bottle_maternal' ? 'text-bottle' : 'text-mutedText'">
+              {{ activeSession.activeSide === 'bottle_maternal' ? '● Activo' : 'Tocar para activar' }}
+            </span>
+          </button>
+
+          <!-- Bottle Formula -->
+          <button
+            type="button"
+            @click="activeSession.activeSide === 'bottle_formula' ? emit('pause-feeding') : emit('switch-mode', 'bottle_formula')"
+            class="p-2.5 rounded-xl border text-center transition-all active:scale-[0.98]"
+            :class="activeSession.activeSide === 'bottle_formula' ? 'bg-warningSoft-soft border-warningSoft text-warningSoft ring-2 ring-warningSoft/30' : 'bg-surface border-borderSubtle text-mutedText hover:border-warningSoft-border'"
+          >
+            <span class="text-[10px] font-bold uppercase tracking-wider block">Bib. Fórmula</span>
+            <span class="text-base font-black font-mono tabular-nums block mt-0.5 text-primaryText">{{ formatSeconds(activeSession.bottleFormulaSeconds || 0) }}</span>
+            <span class="text-[9px] font-semibold block mt-0.5" :class="activeSession.activeSide === 'bottle_formula' ? 'text-warningSoft' : 'text-mutedText'">
+              {{ activeSession.activeSide === 'bottle_formula' ? '● Activo' : 'Tocar para activar' }}
             </span>
           </button>
         </div>
@@ -176,7 +243,7 @@ const nextSuggestedBreast = computed<'left' | 'right' | null>(() => {
         <button
           type="button"
           v-else
-          @click="emit('resume-feeding', activeSession.leftSeconds >= activeSession.rightSeconds ? 'right' : 'left')"
+          @click="emit('resume-feeding', 'left')"
           class="py-3 px-4 rounded-2xl bg-subtle border border-borderSubtle text-primaryText font-bold text-xs flex items-center justify-center gap-2 active:scale-[0.98] transition-all hover:bg-borderSubtle"
         >
           <Play class="w-4 h-4 fill-current" />
@@ -197,9 +264,9 @@ const nextSuggestedBreast = computed<'left' | 'right' | null>(() => {
     </div>
 
     <!-- ELSE: NORMAL IDLE VIEW -->
-    <div v-else>
+    <div v-else class="space-y-4">
       <!-- Header Status -->
-      <div class="flex items-center justify-between mb-4">
+      <div class="flex items-center justify-between">
         <div class="flex items-center gap-2">
           <div class="w-8 h-8 rounded-full bg-breastLeft-soft flex items-center justify-center text-breastLeft">
             <Baby class="w-4 h-4" />
@@ -249,46 +316,74 @@ const nextSuggestedBreast = computed<'left' | 'right' | null>(() => {
         </span>
       </div>
 
-      <!-- Quick Action Ergonomic Action Buttons (Mobile-first Thumb Zone) -->
-      <div class="grid grid-cols-2 gap-3 mt-3">
-        <!-- Left Breast Quick Start -->
-        <button
-          type="button"
-          @click="emit('start-breast', 'left')"
-          class="flex flex-col items-center justify-center p-3.5 rounded-2xl bg-breastLeft-soft border-2 border-breastLeft-border text-primaryText active:scale-[0.98] transition-transform shadow-soft-sm hover:opacity-95"
-        >
-          <div class="w-9 h-9 rounded-full bg-breastLeft text-white flex items-center justify-center mb-1.5 shadow-sm">
-            <Play class="w-4 h-4 ml-0.5 fill-current" />
-          </div>
-          <span class="text-xs font-bold text-primaryText">Pecho Izq.</span>
-          <span class="text-[10px] text-mutedText">Iniciar cronómetro</span>
-        </button>
+      <!-- 4 Formats Ergonomic 2x2 Action Grid -->
+      <div>
+        <span class="text-[11px] font-bold text-mutedText uppercase tracking-wider block mb-2">Iniciar Toma Rápida</span>
+        <div class="grid grid-cols-2 gap-2.5">
+          <!-- 1. Left Breast Quick Start -->
+          <button
+            type="button"
+            @click="emit('start-breast', 'left')"
+            class="flex flex-col items-center justify-center p-3 rounded-2xl bg-breastLeft-soft border-2 border-breastLeft-border text-primaryText active:scale-[0.98] transition-all shadow-soft-xs hover:opacity-95 text-center"
+          >
+            <div class="w-8 h-8 rounded-full bg-breastLeft text-white flex items-center justify-center mb-1 shadow-sm">
+              <Baby class="w-4 h-4" />
+            </div>
+            <span class="text-xs font-extrabold text-primaryText">Pecho Izq.</span>
+            <span class="text-[10px] text-mutedText">Cronometrar</span>
+          </button>
 
-        <!-- Right Breast Quick Start -->
-        <button
-          type="button"
-          @click="emit('start-breast', 'right')"
-          class="flex flex-col items-center justify-center p-3.5 rounded-2xl bg-breastRight-soft border-2 border-breastRight-border text-primaryText active:scale-[0.98] transition-transform shadow-soft-sm hover:opacity-95"
-        >
-          <div class="w-9 h-9 rounded-full bg-breastRight text-white flex items-center justify-center mb-1.5 shadow-sm">
-            <Play class="w-4 h-4 ml-0.5 fill-current" />
-          </div>
-          <span class="text-xs font-bold text-primaryText">Pecho Der.</span>
-          <span class="text-[10px] text-mutedText">Iniciar cronómetro</span>
-        </button>
+          <!-- 2. Right Breast Quick Start -->
+          <button
+            type="button"
+            @click="emit('start-breast', 'right')"
+            class="flex flex-col items-center justify-center p-3 rounded-2xl bg-breastRight-soft border-2 border-breastRight-border text-primaryText active:scale-[0.98] transition-all shadow-soft-xs hover:opacity-95 text-center"
+          >
+            <div class="w-8 h-8 rounded-full bg-breastRight text-white flex items-center justify-center mb-1 shadow-sm">
+              <Baby class="w-4 h-4" />
+            </div>
+            <span class="text-xs font-extrabold text-primaryText">Pecho Der.</span>
+            <span class="text-[10px] text-mutedText">Cronometrar</span>
+          </button>
+
+          <!-- 3. Maternal Bottle Quick Start -->
+          <button
+            type="button"
+            @click="emit('start-bottle', 'maternal')"
+            class="flex flex-col items-center justify-center p-3 rounded-2xl bg-bottle-soft border-2 border-bottle-border text-primaryText active:scale-[0.98] transition-all shadow-soft-xs hover:opacity-95 text-center"
+          >
+            <div class="w-8 h-8 rounded-full bg-bottle text-white flex items-center justify-center mb-1 shadow-sm">
+              <Milk class="w-4 h-4" />
+            </div>
+            <span class="text-xs font-extrabold text-primaryText">Bib. Materna</span>
+            <span class="text-[10px] text-mutedText">Leche materna</span>
+          </button>
+
+          <!-- 4. Formula Bottle Quick Start -->
+          <button
+            type="button"
+            @click="emit('start-bottle', 'formula')"
+            class="flex flex-col items-center justify-center p-3 rounded-2xl bg-warningSoft-soft border-2 border-warningSoft-border text-primaryText active:scale-[0.98] transition-all shadow-soft-xs hover:opacity-95 text-center"
+          >
+            <div class="w-8 h-8 rounded-full bg-warningSoft text-white flex items-center justify-center mb-1 shadow-sm">
+              <Milk class="w-4 h-4" />
+            </div>
+            <span class="text-xs font-extrabold text-primaryText">Bib. Fórmula</span>
+            <span class="text-[10px] text-mutedText">Fórmula infantil</span>
+          </button>
+        </div>
       </div>
 
-      <!-- Manual Register Button -->
+      <!-- Manual / Combined Register Button -->
       <button
         type="button"
         @click="emit('open-manual')"
-        class="w-full mt-3 py-2.5 px-4 rounded-xl bg-subtle border border-borderSubtle text-secondaryText hover:text-primaryText text-xs font-semibold flex items-center justify-center gap-1.5 active:scale-[0.99] transition-all"
+        class="w-full py-2.5 px-4 rounded-xl bg-subtle border border-borderSubtle text-secondaryText hover:text-primaryText text-xs font-semibold flex items-center justify-center gap-1.5 active:scale-[0.99] transition-all"
       >
         <Plus class="w-3.5 h-3.5" />
-        <span>Registrar toma manual o biberón</span>
+        <span>Registrar toma manual o combinada</span>
       </button>
     </div>
 
   </section>
 </template>
-

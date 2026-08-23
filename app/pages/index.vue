@@ -30,7 +30,10 @@ const {
   stats: feedingStats,
   fetchFeedings,
   startBreastSession,
+  startBottleSession,
   switchBreastSide,
+  switchSideOrType,
+  setBottleAmount,
   pauseActiveSession: pauseFeedingSession,
   resumeActiveSession: resumeFeedingSession,
   finishActiveSession: finishFeedingSessionRaw,
@@ -84,6 +87,11 @@ const isSleepTimerOpen = ref<boolean>(false);
 
 const handleStartBreast = (side: 'left' | 'right') => {
   startBreastSession(side);
+  isFeedingTimerOpen.value = true;
+};
+
+const handleStartBottle = (milkType: 'maternal' | 'formula') => {
+  startBottleSession(milkType);
   isFeedingTimerOpen.value = true;
 };
 
@@ -232,8 +240,10 @@ onMounted(() => {
           :active-session="activeFeedingSession"
           :is-loading="isFeedingLoading"
           @start-breast="handleStartBreast"
+          @start-bottle="handleStartBottle"
           @open-manual="isManualFeedingOpen = true"
           @open-active-modal="isFeedingTimerOpen = true"
+          @switch-mode="switchSideOrType"
           @switch-side="switchBreastSide"
           @pause-feeding="pauseFeedingSession"
           @resume-feeding="resumeFeedingSession"
@@ -341,6 +351,7 @@ onMounted(() => {
       @finish-sleep="handleFinishSleep"
       @pause-feeding="pauseFeedingSession"
       @resume-feeding="resumeFeedingSession"
+      @switch-feeding-mode="switchSideOrType"
       @switch-feeding-side="switchBreastSide"
       @finish-feeding="handleFinishFeeding"
     />
@@ -358,7 +369,8 @@ onMounted(() => {
       :is-open="isFeedingTimerOpen"
       :is-loading="isFeedingLoading"
       @close="isFeedingTimerOpen = false"
-      @switch-side="switchBreastSide"
+      @switch-mode="switchSideOrType"
+      @set-bottle-amount="setBottleAmount"
       @pause="pauseFeedingSession"
       @resume="resumeFeedingSession"
       @finish="handleFinishFeeding"

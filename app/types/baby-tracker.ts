@@ -2,13 +2,15 @@
 // BABY TRACKER - STRICT TYPESCRIPT DOMAIN TYPES & DTOs
 // ==============================================================================
 
-export type FeedingType = 'breast' | 'bottle';
+export type FeedingType = 'breast' | 'bottle' | 'mixed';
 export type BreastSide = 'left' | 'right' | 'both';
+export type BottleMilkType = 'maternal' | 'formula' | 'mixed';
+export type ActiveFeedingSide = 'left' | 'right' | 'bottle_maternal' | 'bottle_formula' | null;
 
 export interface Feeding {
   id: string;
   user_id?: string | null;
-  feeding_type: FeedingType;
+  feeding_type: 'breast' | 'bottle'; // database enum value
   breast_side?: BreastSide | null;
   started_at: string; // ISO 8601 string
   ended_at: string;   // ISO 8601 string
@@ -16,13 +18,16 @@ export interface Feeding {
   duration_left_seconds: number;
   duration_right_seconds: number;
   amount_ml?: number | null;
+  bottle_milk_type?: BottleMilkType | null;
+  amount_maternal_ml?: number | null;
+  amount_formula_ml?: number | null;
   notes?: string | null;
   created_at: string;
   updated_at: string;
 }
 
 export interface CreateFeedingDTO {
-  feeding_type: FeedingType;
+  feeding_type: 'breast' | 'bottle';
   breast_side?: BreastSide | null;
   started_at: string;
   ended_at: string;
@@ -30,6 +35,9 @@ export interface CreateFeedingDTO {
   duration_left_seconds?: number;
   duration_right_seconds?: number;
   amount_ml?: number | null;
+  bottle_milk_type?: BottleMilkType | null;
+  amount_maternal_ml?: number | null;
+  amount_formula_ml?: number | null;
   notes?: string | null;
 }
 
@@ -75,9 +83,14 @@ export interface FeedingStatsSummary {
   avgRestIntervalMinutes: number;
   leftBreastCount: number;
   rightBreastCount: number;
+  bottleMaternalCount: number;
+  bottleFormulaCount: number;
   bottleCount: number;
+  mixedCount: number;
   leftPercentage: number;
   rightPercentage: number;
+  bottleMaternalPercentage: number;
+  bottleFormulaPercentage: number;
   bottlePercentage: number;
   lastFeeding?: Feeding | null;
 }
@@ -85,12 +98,17 @@ export interface FeedingStatsSummary {
 export interface ActiveFeedingSession {
   isActive: boolean;
   feedingType: FeedingType;
-  activeSide: 'left' | 'right' | null;
+  activeSide: ActiveFeedingSide;
   startedAt: string | null;
   sideStartedAt: number | null;
   leftSeconds: number;
   rightSeconds: number;
+  bottleMaternalSeconds: number;
+  bottleFormulaSeconds: number;
+  amountMaternalMl: number | null;
+  amountFormulaMl: number | null;
   amountMl: number | null;
+  bottleMilkType: BottleMilkType | null;
   notes: string;
 }
 

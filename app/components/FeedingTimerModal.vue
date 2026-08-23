@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { ref, computed } from 'vue';
-import { Play, Pause, ChevronDown, Trash2, Check, Sparkles, AlertCircle } from 'lucide-vue-next';
-import type { ActiveFeedingSession } from '~/types/baby-tracker';
+import { Play, Pause, ChevronDown, Trash2, Check, AlertCircle, Baby, Milk, Droplets } from 'lucide-vue-next';
+import type { ActiveFeedingSession, ActiveFeedingSide } from '~/types/baby-tracker';
 
 const props = withDefaults(defineProps<{
   session: ActiveFeedingSession;
@@ -13,9 +13,10 @@ const props = withDefaults(defineProps<{
 
 const emit = defineEmits<{
   (e: 'close'): void;
-  (e: 'switch-side', side: 'left' | 'right'): void;
+  (e: 'switch-mode', mode: ActiveFeedingSide): void;
+  (e: 'set-bottle-amount', type: 'maternal' | 'formula', ml: number | null): void;
   (e: 'pause'): void;
-  (e: 'resume', side: 'left' | 'right'): void;
+  (e: 'resume', mode?: ActiveFeedingSide): void;
   (e: 'finish'): void;
   (e: 'cancel'): void;
   (e: 'update:notes', val: string): void;
@@ -30,7 +31,12 @@ const formatSeconds = (sec: number) => {
 };
 
 const totalSeconds = computed(() => {
-  return props.session.leftSeconds + props.session.rightSeconds;
+  return (
+    props.session.leftSeconds +
+    props.session.rightSeconds +
+    (props.session.bottleMaternalSeconds || 0) +
+    (props.session.bottleFormulaSeconds || 0)
+  );
 });
 
 const isPaused = computed(() => {
@@ -46,6 +52,12 @@ const handleConfirmCancel = () => {
   isConfirmingCancel.value = false;
   emit('cancel');
 };
+
+const adjustMl = (type: 'maternal' | 'formula', delta: number) => {
+  const current = type === 'maternal' ? (props.session.amountMaternalMl || 0) : (props.session.amountFormulaMl || 0);
+  const newVal = Math.max(0, current + delta);
+  emit('set-bottle-amount', type, newVal > 0 ? newVal : null);
+};
 </script>
 
 <template>
@@ -54,17 +66,17 @@ const handleConfirmCancel = () => {
     class="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-0 sm:p-4 bg-black/60 backdrop-blur-sm transition-all"
     @click.self="handleBackdropClick"
   >
-    <div class="w-full max-w-md bg-surface rounded-t-3xl sm:rounded-3xl p-6 shadow-soft-lg border border-borderSubtle animate-in slide-in-from-bottom-6 duration-200">
+    <div class="w-full max-w-md bg-surface rounded-t-3xl sm:rounded-3xl p-6 shadow-soft-lg border border-borderSubtle animate-in slide-in-from-bottom-6 duration-200 max-h-[90vh] overflow-y-auto">
       
       <!-- Modal Header with Minimize & Discard Controls -->
-      <div class="flex items-center justify-between pb-4 border-b border-borderSubtle">
+      <div class="flex items-center justify-between pb-3 border-b border-borderSubtle">
         <div class="flex items-center gap-2">
           <span class="flex h-3 w-3 relative">
             <span v-if="!isPaused" class="animate-ping absolute inline-flex h-full w-full rounded-full bg-meds opacity-75"></span>
             <span class="relative inline-flex rounded-full h-3 w-3" :class="isPaused ? 'bg-warningSoft' : 'bg-meds'"></span>
           </span>
           <h3 class="text-base font-bold text-primaryText">
-            {{ isPaused ? 'Toma Pausada' : 'Toma en Curso' }}
+            {{ isPaused ? 'Toma en Pausa' : 'Toma en Vivo' }}
           </h3>
         </div>
 
@@ -122,58 +134,173 @@ const handleConfirmCancel = () => {
       </div>
 
       <!-- Total Duration Clock -->
-      <div class="text-center my-6">
-        <span class="text-xs font-semibold uppercase tracking-wider text-mutedText">Duración Total</span>
+      <div class="text-center my-4">
+        <span class="text-[11px] font-semibold uppercase tracking-wider text-mutedText">Duración Total de la Sesión</span>
         <div class="text-5xl font-black font-mono tracking-tight text-primaryText tabular-nums mt-1">
           {{ formatSeconds(totalSeconds) }}
         </div>
       </div>
 
-      <!-- Side-by-Side Dual Timers & Switch Controls -->
-      <div class="grid grid-cols-2 gap-3 mb-6">
-        <!-- Left Breast Control -->
+      <!-- 4-Way Mode Controls Grid -->
+      <div class="grid grid-cols-2 gap-2.5 mb-4">
+        <!-- 1. Left Breast Control -->
         <button
           type="button"
-          @click="session.activeSide === 'left' ? emit('pause') : emit('switch-side', 'left')"
-          class="p-4 rounded-2xl border-2 flex flex-col items-center justify-center transition-all relative overflow-hidden active:scale-[0.98]"
+          @click="session.activeSide === 'left' ? emit('pause') : emit('switch-mode', 'left')"
+          class="p-3 rounded-2xl border-2 flex flex-col items-center justify-center transition-all relative overflow-hidden active:scale-[0.98]"
           :class="session.activeSide === 'left' 
             ? 'bg-breastLeft-soft border-breastLeft text-primaryText shadow-md ring-2 ring-breastLeft/30' 
             : 'bg-subtle border-borderSubtle text-secondaryText hover:border-breastLeft-border'"
         >
-          <span class="text-xs font-bold uppercase tracking-wider text-breastLeft">Pecho Izquierdo</span>
-          <span class="text-2xl font-black font-mono my-1 tabular-nums">{{ formatSeconds(session.leftSeconds) }}</span>
-          <span class="text-[11px] font-semibold flex items-center gap-1" :class="session.activeSide === 'left' ? 'text-breastLeft' : 'text-mutedText'">
-            <span v-if="session.activeSide === 'left'" class="w-2 h-2 rounded-full bg-breastLeft animate-pulse" />
+          <div class="flex items-center gap-1 text-breastLeft mb-0.5">
+            <Baby class="w-3.5 h-3.5" />
+            <span class="text-[11px] font-bold uppercase tracking-wider">Pecho Izq.</span>
+          </div>
+          <span class="text-xl font-black font-mono my-0.5 tabular-nums">{{ formatSeconds(session.leftSeconds) }}</span>
+          <span class="text-[10px] font-semibold flex items-center gap-1" :class="session.activeSide === 'left' ? 'text-breastLeft' : 'text-mutedText'">
+            <span v-if="session.activeSide === 'left'" class="w-1.5 h-1.5 rounded-full bg-breastLeft animate-pulse" />
             {{ session.activeSide === 'left' ? 'Grabando...' : 'Tocar para activar' }}
           </span>
         </button>
 
-        <!-- Right Breast Control -->
+        <!-- 2. Right Breast Control -->
         <button
           type="button"
-          @click="session.activeSide === 'right' ? emit('pause') : emit('switch-side', 'right')"
-          class="p-4 rounded-2xl border-2 flex flex-col items-center justify-center transition-all relative overflow-hidden active:scale-[0.98]"
+          @click="session.activeSide === 'right' ? emit('pause') : emit('switch-mode', 'right')"
+          class="p-3 rounded-2xl border-2 flex flex-col items-center justify-center transition-all relative overflow-hidden active:scale-[0.98]"
           :class="session.activeSide === 'right' 
             ? 'bg-breastRight-soft border-breastRight text-primaryText shadow-md ring-2 ring-breastRight/30' 
             : 'bg-subtle border-borderSubtle text-secondaryText hover:border-breastRight-border'"
         >
-          <span class="text-xs font-bold uppercase tracking-wider text-breastRight">Pecho Derecho</span>
-          <span class="text-2xl font-black font-mono my-1 tabular-nums">{{ formatSeconds(session.rightSeconds) }}</span>
-          <span class="text-[11px] font-semibold flex items-center gap-1" :class="session.activeSide === 'right' ? 'text-breastRight' : 'text-mutedText'">
-            <span v-if="session.activeSide === 'right'" class="w-2 h-2 rounded-full bg-breastRight animate-pulse" />
+          <div class="flex items-center gap-1 text-breastRight mb-0.5">
+            <Baby class="w-3.5 h-3.5" />
+            <span class="text-[11px] font-bold uppercase tracking-wider">Pecho Der.</span>
+          </div>
+          <span class="text-xl font-black font-mono my-0.5 tabular-nums">{{ formatSeconds(session.rightSeconds) }}</span>
+          <span class="text-[10px] font-semibold flex items-center gap-1" :class="session.activeSide === 'right' ? 'text-breastRight' : 'text-mutedText'">
+            <span v-if="session.activeSide === 'right'" class="w-1.5 h-1.5 rounded-full bg-breastRight animate-pulse" />
             {{ session.activeSide === 'right' ? 'Grabando...' : 'Tocar para activar' }}
+          </span>
+        </button>
+
+        <!-- 3. Maternal Bottle Control -->
+        <button
+          type="button"
+          @click="session.activeSide === 'bottle_maternal' ? emit('pause') : emit('switch-mode', 'bottle_maternal')"
+          class="p-3 rounded-2xl border-2 flex flex-col items-center justify-center transition-all relative overflow-hidden active:scale-[0.98]"
+          :class="session.activeSide === 'bottle_maternal' 
+            ? 'bg-bottle-soft border-bottle text-primaryText shadow-md ring-2 ring-bottle/30' 
+            : 'bg-subtle border-borderSubtle text-secondaryText hover:border-bottle-border'"
+        >
+          <div class="flex items-center gap-1 text-bottle mb-0.5">
+            <Milk class="w-3.5 h-3.5" />
+            <span class="text-[11px] font-bold uppercase tracking-wider">Bib. Materna</span>
+          </div>
+          <span class="text-xl font-black font-mono my-0.5 tabular-nums">{{ formatSeconds(session.bottleMaternalSeconds || 0) }}</span>
+          <span class="text-[10px] font-semibold flex items-center gap-1" :class="session.activeSide === 'bottle_maternal' ? 'text-bottle' : 'text-mutedText'">
+            <span v-if="session.activeSide === 'bottle_maternal'" class="w-1.5 h-1.5 rounded-full bg-bottle animate-pulse" />
+            {{ session.activeSide === 'bottle_maternal' ? 'Grabando...' : 'Tocar para activar' }}
+          </span>
+        </button>
+
+        <!-- 4. Formula Bottle Control -->
+        <button
+          type="button"
+          @click="session.activeSide === 'bottle_formula' ? emit('pause') : emit('switch-mode', 'bottle_formula')"
+          class="p-3 rounded-2xl border-2 flex flex-col items-center justify-center transition-all relative overflow-hidden active:scale-[0.98]"
+          :class="session.activeSide === 'bottle_formula' 
+            ? 'bg-warningSoft-soft border-warningSoft text-primaryText shadow-md ring-2 ring-warningSoft/30' 
+            : 'bg-subtle border-borderSubtle text-secondaryText hover:border-warningSoft-border'"
+        >
+          <div class="flex items-center gap-1 text-warningSoft mb-0.5">
+            <Milk class="w-3.5 h-3.5" />
+            <span class="text-[11px] font-bold uppercase tracking-wider">Bib. Fórmula</span>
+          </div>
+          <span class="text-xl font-black font-mono my-0.5 tabular-nums">{{ formatSeconds(session.bottleFormulaSeconds || 0) }}</span>
+          <span class="text-[10px] font-semibold flex items-center gap-1" :class="session.activeSide === 'bottle_formula' ? 'text-warningSoft' : 'text-mutedText'">
+            <span v-if="session.activeSide === 'bottle_formula'" class="w-1.5 h-1.5 rounded-full bg-warningSoft animate-pulse" />
+            {{ session.activeSide === 'bottle_formula' ? 'Grabando...' : 'Tocar para activar' }}
           </span>
         </button>
       </div>
 
+      <!-- Bottle Amount Inputs (Shown if bottle was used or active) -->
+      <div class="p-3 rounded-2xl bg-subtle border border-borderSubtle space-y-2.5 mb-4">
+        <span class="text-[11px] font-bold uppercase tracking-wider text-mutedText block">Cantidades de Biberón (ml)</span>
+        
+        <div class="grid grid-cols-2 gap-2">
+          <!-- Maternal Bottle ml -->
+          <div class="p-2 bg-surface rounded-xl border border-borderSubtle">
+            <div class="flex items-center justify-between text-[10px] font-semibold text-bottle mb-1">
+              <span>Leche Materna</span>
+              <span class="font-mono">{{ session.amountMaternalMl || 0 }} ml</span>
+            </div>
+            <div class="flex items-center gap-1">
+              <button 
+                type="button" 
+                @click="adjustMl('maternal', -10)" 
+                class="px-2 py-0.5 bg-subtle rounded text-xs font-bold hover:bg-borderSubtle"
+              >
+                -10
+              </button>
+              <input
+                type="number"
+                :value="session.amountMaternalMl"
+                @input="emit('set-bottle-amount', 'maternal', ($event.target as HTMLInputElement).value ? Number(($event.target as HTMLInputElement).value) : null)"
+                placeholder="0"
+                class="w-full text-center text-xs font-mono font-bold bg-transparent border-b border-borderSubtle py-0.5 focus:outline-none"
+              />
+              <button 
+                type="button" 
+                @click="adjustMl('maternal', 10)" 
+                class="px-2 py-0.5 bg-subtle rounded text-xs font-bold hover:bg-borderSubtle"
+              >
+                +10
+              </button>
+            </div>
+          </div>
+
+          <!-- Formula Bottle ml -->
+          <div class="p-2 bg-surface rounded-xl border border-borderSubtle">
+            <div class="flex items-center justify-between text-[10px] font-semibold text-warningSoft mb-1">
+              <span>Fórmula</span>
+              <span class="font-mono">{{ session.amountFormulaMl || 0 }} ml</span>
+            </div>
+            <div class="flex items-center gap-1">
+              <button 
+                type="button" 
+                @click="adjustMl('formula', -10)" 
+                class="px-2 py-0.5 bg-subtle rounded text-xs font-bold hover:bg-borderSubtle"
+              >
+                -10
+              </button>
+              <input
+                type="number"
+                :value="session.amountFormulaMl"
+                @input="emit('set-bottle-amount', 'formula', ($event.target as HTMLInputElement).value ? Number(($event.target as HTMLInputElement).value) : null)"
+                placeholder="0"
+                class="w-full text-center text-xs font-mono font-bold bg-transparent border-b border-borderSubtle py-0.5 focus:outline-none"
+              />
+              <button 
+                type="button" 
+                @click="adjustMl('formula', 10)" 
+                class="px-2 py-0.5 bg-subtle rounded text-xs font-bold hover:bg-borderSubtle"
+              >
+                +10
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+
       <!-- Notes Field -->
       <div class="mb-5">
-        <label class="block text-xs font-medium text-mutedText mb-1">Notas (opcional):</label>
+        <label class="block text-xs font-medium text-mutedText mb-1">Notas / Observaciones (opcional):</label>
         <input
           type="text"
           :value="session.notes"
           @input="emit('update:notes', ($event.target as HTMLInputElement).value)"
-          placeholder="Ej. Quedó satisfecho, buen agarre..."
+          placeholder="Ej. Tomó primero pecho y luego suplemento de fórmula..."
           class="w-full px-3.5 py-2 text-xs rounded-xl bg-subtle border border-borderSubtle text-primaryText focus:outline-none focus:ring-2 focus:ring-breastLeft/40"
         />
       </div>
@@ -193,7 +320,7 @@ const handleConfirmCancel = () => {
         <button
           type="button"
           v-else
-          @click="emit('resume', session.leftSeconds >= session.rightSeconds ? 'right' : 'left')"
+          @click="emit('resume', 'left')"
           class="py-3 px-4 rounded-2xl bg-subtle border border-borderSubtle text-primaryText font-bold text-sm flex items-center justify-center gap-2 active:scale-[0.98] transition-all hover:bg-borderSubtle"
         >
           <Play class="w-4 h-4 fill-current" />
@@ -226,4 +353,5 @@ const handleConfirmCancel = () => {
     </div>
   </div>
 </template>
+
 

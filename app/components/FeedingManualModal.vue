@@ -1,7 +1,7 @@
 <script setup lang="ts">
-import { ref, watch } from 'vue';
-import { X, Check, Baby, Milk } from 'lucide-vue-next';
-import type { CreateFeedingDTO, FeedingType, BreastSide } from '~/types/baby-tracker';
+import { ref, watch, computed } from 'vue';
+import { X, Check, Baby, Milk, AlertCircle } from 'lucide-vue-next';
+import type { CreateFeedingDTO, BreastSide } from '~/types/baby-tracker';
 
 const props = defineProps<{
   isOpen: boolean;
@@ -13,14 +13,22 @@ const emit = defineEmits<{
   (e: 'submit', payload: CreateFeedingDTO): void;
 }>();
 
-const feedingType = ref<FeedingType>('breast');
-const breastSide = ref<BreastSide>('left');
+// Multi-select format flags
+const useLeftBreast = ref<boolean>(true);
+const useRightBreast = ref<boolean>(false);
+const useMaternalBottle = ref<boolean>(false);
+const useFormulaBottle = ref<boolean>(false);
+
+// Format details
+const durationLeftMinutes = ref<number>(15);
+const durationRightMinutes = ref<number>(15);
+const amountMaternalMl = ref<number>(60);
+const amountFormulaMl = ref<number>(90);
+const bottleDurationMinutes = ref<number>(10);
+
 const startedAtLocal = ref<string>('');
-const durationMinutes = ref<number>(15);
-const durationLeftMinutes = ref<number>(10);
-const durationRightMinutes = ref<number>(10);
-const amountMl = ref<number>(90);
 const notes = ref<string>('');
+const formError = ref<string | null>(null);
 
 // Format local datetime input (YYYY-MM-DDTHH:MM)
 const initDateTime = () => {
@@ -36,42 +44,85 @@ const initDateTime = () => {
 watch(() => props.isOpen, (newVal) => {
   if (newVal) {
     initDateTime();
+    useLeftBreast.value = true;
+    useRightBreast.value = false;
+    useMaternalBottle.value = false;
+    useFormulaBottle.value = false;
+    durationLeftMinutes.value = 15;
+    durationRightMinutes.value = 15;
+    amountMaternalMl.value = 60;
+    amountFormulaMl.value = 90;
+    bottleDurationMinutes.value = 10;
     notes.value = '';
+    formError.value = null;
   }
 });
 
+const isAnySelected = computed(() => {
+  return useLeftBreast.value || useRightBreast.value || useMaternalBottle.value || useFormulaBottle.value;
+});
+
 const handleSubmit = () => {
+  if (!isAnySelected.value) {
+    formError.value = 'Selecciona al menos un formato (Pecho o Biberón)';
+    return;
+  }
+  formError.value = null;
+
   const startDate = new Date(startedAtLocal.value);
-  let totalDurationSec = 0;
   let leftSec = 0;
   let rightSec = 0;
+  let bottleSec = 0;
 
-  if (feedingType.value === 'breast') {
-    if (breastSide.value === 'both') {
-      leftSec = (durationLeftMinutes.value || 0) * 60;
-      rightSec = (durationRightMinutes.value || 0) * 60;
-      totalDurationSec = leftSec + rightSec;
-    } else {
-      totalDurationSec = (durationMinutes.value || 0) * 60;
-      if (breastSide.value === 'left') leftSec = totalDurationSec;
-      if (breastSide.value === 'right') rightSec = totalDurationSec;
-    }
-  } else {
-    totalDurationSec = (durationMinutes.value || 0) * 60;
+  if (useLeftBreast.value) {
+    leftSec = (durationLeftMinutes.value || 0) * 60;
+  }
+  if (useRightBreast.value) {
+    rightSec = (durationRightMinutes.value || 0) * 60;
+  }
+  if (useMaternalBottle.value || useFormulaBottle.value) {
+    bottleSec = (bottleDurationMinutes.value || 0) * 60;
   }
 
-  const endDate = new Date(startDate.getTime() + totalDurationSec * 1000);
+  const totalDurationSec = leftSec + rightSec + (leftSec === 0 && rightSec === 0 ? bottleSec : 0);
+  const endDate = new Date(startDate.getTime() + (totalDurationSec || 600) * 1000);
+
+  const matMl = useMaternalBottle.value ? (amountMaternalMl.value || 0) : 0;
+  const formMl = useFormulaBottle.value ? (amountFormulaMl.value || 0) : 0;
+  const totalMl = matMl + formMl;
+
+  const hasBreast = useLeftBreast.value || useRightBreast.value;
+  const hasBottle = useMaternalBottle.value || useFormulaBottle.value;
+
+  let breastSide: BreastSide | null = null;
+  if (useLeftBreast.value && useRightBreast.value) breastSide = 'both';
+  else if (useLeftBreast.value) breastSide = 'left';
+  else if (useRightBreast.value) breastSide = 'right';
+
+  // Build tags for notes
+  const tags: string[] = [];
+  if (useMaternalBottle.value) tags.push(`Materna: ${matMl}ml`);
+  if (useFormulaBottle.value) tags.push(`Fórmula: ${formMl}ml`);
+  if (hasBreast && hasBottle) tags.push('Combinada');
+
+  let combinedNotes = notes.value.trim();
+  if (tags.length > 0) {
+    const tagStr = `[${tags.join(' | ')}]`;
+    combinedNotes = combinedNotes ? `${tagStr} ${combinedNotes}` : tagStr;
+  }
 
   const payload: CreateFeedingDTO = {
-    feeding_type: feedingType.value,
-    breast_side: feedingType.value === 'breast' ? breastSide.value : null,
+    feeding_type: hasBreast ? 'breast' : 'bottle',
+    breast_side: breastSide,
     started_at: startDate.toISOString(),
     ended_at: endDate.toISOString(),
-    duration_seconds: totalDurationSec,
+    duration_seconds: totalDurationSec || (bottleSec > 0 ? bottleSec : 600),
     duration_left_seconds: leftSec,
     duration_right_seconds: rightSec,
-    amount_ml: feedingType.value === 'bottle' ? amountMl.value : null,
-    notes: notes.value.trim() || null
+    amount_ml: totalMl > 0 ? totalMl : null,
+    amount_maternal_ml: useMaternalBottle.value ? matMl : null,
+    amount_formula_ml: useFormulaBottle.value ? formMl : null,
+    notes: combinedNotes || null
   };
 
   emit('submit', payload);
@@ -87,7 +138,10 @@ const handleSubmit = () => {
       
       <!-- Header -->
       <div class="flex items-center justify-between pb-3 border-b border-borderSubtle mb-4">
-        <h3 class="text-base font-bold text-primaryText">Registrar Toma Retroactiva</h3>
+        <div>
+          <h3 class="text-base font-extrabold text-primaryText">Registrar Toma Manual</h3>
+          <p class="text-[11px] text-mutedText">Combiná pecho y biberón libremente</p>
+        </div>
         <button 
           type="button" 
           @click="emit('close')" 
@@ -98,65 +152,152 @@ const handleSubmit = () => {
       </div>
 
       <form @submit.prevent="handleSubmit" class="space-y-4">
-        <!-- Type Selection Toggle -->
-        <div>
-          <label class="block text-xs font-semibold text-mutedText uppercase tracking-wider mb-1.5">Tipo de Toma</label>
-          <div class="grid grid-cols-2 gap-2 bg-subtle p-1 rounded-2xl border border-borderSubtle">
-            <button
-              type="button"
-              @click="feedingType = 'breast'"
-              class="py-2 px-3 rounded-xl text-xs font-bold flex items-center justify-center gap-1.5 transition-all"
-              :class="feedingType === 'breast' ? 'bg-surface text-primaryText shadow-sm' : 'text-mutedText'"
-            >
-              <Baby class="w-3.5 h-3.5" />
-              <span>Pecho</span>
-            </button>
-            <button
-              type="button"
-              @click="feedingType = 'bottle'"
-              class="py-2 px-3 rounded-xl text-xs font-bold flex items-center justify-center gap-1.5 transition-all"
-              :class="feedingType === 'bottle' ? 'bg-surface text-primaryText shadow-sm' : 'text-mutedText'"
-            >
-              <Milk class="w-3.5 h-3.5" />
-              <span>Biberón / Fórmula</span>
-            </button>
-          </div>
+        <!-- Error Banner if no selection -->
+        <div v-if="formError" class="p-2.5 bg-rose-500/10 border border-rose-500/20 rounded-xl text-xs text-rose-500 flex items-center gap-1.5 font-bold">
+          <AlertCircle class="w-4 h-4 flex-shrink-0" />
+          <span>{{ formError }}</span>
         </div>
 
-        <!-- Breast Options -->
-        <div v-if="feedingType === 'breast'">
-          <label class="block text-xs font-semibold text-mutedText uppercase tracking-wider mb-1.5">Pecho Utilizado</label>
-          <div class="grid grid-cols-3 gap-2">
-            <button
-              type="button"
-              @click="breastSide = 'left'"
-              class="py-2 px-2 rounded-xl text-xs font-bold border transition-all"
-              :class="breastSide === 'left' ? 'bg-breastLeft-soft border-breastLeft text-primaryText' : 'bg-subtle border-borderSubtle text-mutedText'"
+        <!-- 4 Combinable Formats Grid -->
+        <div>
+          <label class="block text-xs font-bold text-mutedText uppercase tracking-wider mb-2">Formatos Utilizados (Combinables)</label>
+          
+          <div class="grid grid-cols-2 gap-2">
+            <!-- 1. Pecho Izquierdo Checkbox Card -->
+            <div 
+              @click="useLeftBreast = !useLeftBreast"
+              class="p-3 rounded-2xl border-2 cursor-pointer transition-all flex flex-col justify-between"
+              :class="useLeftBreast ? 'bg-breastLeft-soft border-breastLeft text-primaryText ring-2 ring-breastLeft/20' : 'bg-subtle border-borderSubtle text-mutedText opacity-75'"
             >
-              Izquierdo
-            </button>
-            <button
-              type="button"
-              @click="breastSide = 'right'"
-              class="py-2 px-2 rounded-xl text-xs font-bold border transition-all"
-              :class="breastSide === 'right' ? 'bg-breastRight-soft border-breastRight text-primaryText' : 'bg-subtle border-borderSubtle text-mutedText'"
+              <div class="flex items-center justify-between mb-1.5">
+                <div class="flex items-center gap-1.5">
+                  <Baby class="w-4 h-4 text-breastLeft" />
+                  <span class="text-xs font-bold">Pecho Izq.</span>
+                </div>
+                <input 
+                  type="checkbox" 
+                  :checked="useLeftBreast" 
+                  class="rounded accent-breastLeft w-4 h-4 cursor-pointer" 
+                  @click.stop="useLeftBreast = !useLeftBreast" 
+                />
+              </div>
+              <div v-if="useLeftBreast" class="mt-1" @click.stop>
+                <div class="flex items-center gap-1 bg-surface p-1.5 rounded-xl border border-borderSubtle">
+                  <input
+                    type="number"
+                    v-model.number="durationLeftMinutes"
+                    min="1"
+                    max="120"
+                    class="w-full text-center text-xs font-mono font-bold bg-transparent focus:outline-none"
+                  />
+                  <span class="text-[10px] text-mutedText pr-1">min</span>
+                </div>
+              </div>
+            </div>
+
+            <!-- 2. Pecho Derecho Checkbox Card -->
+            <div 
+              @click="useRightBreast = !useRightBreast"
+              class="p-3 rounded-2xl border-2 cursor-pointer transition-all flex flex-col justify-between"
+              :class="useRightBreast ? 'bg-breastRight-soft border-breastRight text-primaryText ring-2 ring-breastRight/20' : 'bg-subtle border-borderSubtle text-mutedText opacity-75'"
             >
-              Derecho
-            </button>
-            <button
-              type="button"
-              @click="breastSide = 'both'"
-              class="py-2 px-2 rounded-xl text-xs font-bold border transition-all"
-              :class="breastSide === 'both' ? 'bg-bottle-soft border-bottle text-primaryText' : 'bg-subtle border-borderSubtle text-mutedText'"
+              <div class="flex items-center justify-between mb-1.5">
+                <div class="flex items-center gap-1.5">
+                  <Baby class="w-4 h-4 text-breastRight" />
+                  <span class="text-xs font-bold">Pecho Der.</span>
+                </div>
+                <input 
+                  type="checkbox" 
+                  :checked="useRightBreast" 
+                  class="rounded accent-breastRight w-4 h-4 cursor-pointer" 
+                  @click.stop="useRightBreast = !useRightBreast" 
+                />
+              </div>
+              <div v-if="useRightBreast" class="mt-1" @click.stop>
+                <div class="flex items-center gap-1 bg-surface p-1.5 rounded-xl border border-borderSubtle">
+                  <input
+                    type="number"
+                    v-model.number="durationRightMinutes"
+                    min="1"
+                    max="120"
+                    class="w-full text-center text-xs font-mono font-bold bg-transparent focus:outline-none"
+                  />
+                  <span class="text-[10px] text-mutedText pr-1">min</span>
+                </div>
+              </div>
+            </div>
+
+            <!-- 3. Biberón Leche Materna Card -->
+            <div 
+              @click="useMaternalBottle = !useMaternalBottle"
+              class="p-3 rounded-2xl border-2 cursor-pointer transition-all flex flex-col justify-between"
+              :class="useMaternalBottle ? 'bg-bottle-soft border-bottle text-primaryText ring-2 ring-bottle/20' : 'bg-subtle border-borderSubtle text-mutedText opacity-75'"
             >
-              Ambos
-            </button>
+              <div class="flex items-center justify-between mb-1.5">
+                <div class="flex items-center gap-1.5">
+                  <Milk class="w-4 h-4 text-bottle" />
+                  <span class="text-xs font-bold">Bib. Materna</span>
+                </div>
+                <input 
+                  type="checkbox" 
+                  :checked="useMaternalBottle" 
+                  class="rounded accent-bottle w-4 h-4 cursor-pointer" 
+                  @click.stop="useMaternalBottle = !useMaternalBottle" 
+                />
+              </div>
+              <div v-if="useMaternalBottle" class="mt-1" @click.stop>
+                <div class="flex items-center gap-1 bg-surface p-1.5 rounded-xl border border-borderSubtle">
+                  <input
+                    type="number"
+                    v-model.number="amountMaternalMl"
+                    min="5"
+                    max="500"
+                    step="5"
+                    class="w-full text-center text-xs font-mono font-bold bg-transparent focus:outline-none"
+                  />
+                  <span class="text-[10px] text-mutedText pr-1">ml</span>
+                </div>
+              </div>
+            </div>
+
+            <!-- 4. Biberón Fórmula Card -->
+            <div 
+              @click="useFormulaBottle = !useFormulaBottle"
+              class="p-3 rounded-2xl border-2 cursor-pointer transition-all flex flex-col justify-between"
+              :class="useFormulaBottle ? 'bg-warningSoft-soft border-warningSoft text-primaryText ring-2 ring-warningSoft/20' : 'bg-subtle border-borderSubtle text-mutedText opacity-75'"
+            >
+              <div class="flex items-center justify-between mb-1.5">
+                <div class="flex items-center gap-1.5">
+                  <Milk class="w-4 h-4 text-warningSoft" />
+                  <span class="text-xs font-bold">Bib. Fórmula</span>
+                </div>
+                <input 
+                  type="checkbox" 
+                  :checked="useFormulaBottle" 
+                  class="rounded accent-warningSoft w-4 h-4 cursor-pointer" 
+                  @click.stop="useFormulaBottle = !useFormulaBottle" 
+                />
+              </div>
+              <div v-if="useFormulaBottle" class="mt-1" @click.stop>
+                <div class="flex items-center gap-1 bg-surface p-1.5 rounded-xl border border-borderSubtle">
+                  <input
+                    type="number"
+                    v-model.number="amountFormulaMl"
+                    min="5"
+                    max="500"
+                    step="5"
+                    class="w-full text-center text-xs font-mono font-bold bg-transparent focus:outline-none"
+                  />
+                  <span class="text-[10px] text-mutedText pr-1">ml</span>
+                </div>
+              </div>
+            </div>
           </div>
         </div>
 
         <!-- Start Time -->
         <div>
-          <label class="block text-xs font-semibold text-mutedText uppercase tracking-wider mb-1">Fecha y Hora de Inicio</label>
+          <label class="block text-xs font-semibold text-mutedText uppercase tracking-wider mb-1">Fecha y Hora de la Toma</label>
           <input
             type="datetime-local"
             v-model="startedAtLocal"
@@ -165,61 +306,13 @@ const handleSubmit = () => {
           />
         </div>
 
-        <!-- Durations -->
-        <div v-if="feedingType === 'breast' && breastSide === 'both'" class="grid grid-cols-2 gap-3">
-          <div>
-            <label class="block text-[11px] font-medium text-mutedText mb-1">Minutos Pecho Izq.</label>
-            <input
-              type="number"
-              v-model.number="durationLeftMinutes"
-              min="1"
-              max="120"
-              class="w-full px-3 py-2 text-xs rounded-xl bg-subtle border border-borderSubtle text-primaryText font-mono"
-            />
-          </div>
-          <div>
-            <label class="block text-[11px] font-medium text-mutedText mb-1">Minutos Pecho Der.</label>
-            <input
-              type="number"
-              v-model.number="durationRightMinutes"
-              min="1"
-              max="120"
-              class="w-full px-3 py-2 text-xs rounded-xl bg-subtle border border-borderSubtle text-primaryText font-mono"
-            />
-          </div>
-        </div>
-
-        <div v-else class="grid grid-cols-2 gap-3">
-          <div>
-            <label class="block text-[11px] font-medium text-mutedText mb-1">Duración (minutos)</label>
-            <input
-              type="number"
-              v-model.number="durationMinutes"
-              min="1"
-              max="180"
-              class="w-full px-3 py-2 text-xs rounded-xl bg-subtle border border-borderSubtle text-primaryText font-mono"
-            />
-          </div>
-          <div v-if="feedingType === 'bottle'">
-            <label class="block text-[11px] font-medium text-mutedText mb-1">Cantidad (ml)</label>
-            <input
-              type="number"
-              v-model.number="amountMl"
-              min="5"
-              max="500"
-              step="5"
-              class="w-full px-3 py-2 text-xs rounded-xl bg-subtle border border-borderSubtle text-primaryText font-mono"
-            />
-          </div>
-        </div>
-
         <!-- Notes -->
         <div>
           <label class="block text-xs font-semibold text-mutedText uppercase tracking-wider mb-1">Notas / Observaciones</label>
           <textarea
             v-model="notes"
             rows="2"
-            placeholder="Detalles sobre la toma..."
+            placeholder="Ej. Pecho derecho 15 min + suplemento 60ml de fórmula..."
             class="w-full px-3.5 py-2 text-xs rounded-xl bg-subtle border border-borderSubtle text-primaryText focus:outline-none focus:ring-2 focus:ring-breastLeft/40 resize-none"
           ></textarea>
         </div>
@@ -228,11 +321,11 @@ const handleSubmit = () => {
         <div class="pt-2">
           <button
             type="submit"
-            :disabled="isLoading"
+            :disabled="isLoading || !isAnySelected"
             class="w-full py-3 rounded-2xl bg-primaryText text-surface font-bold text-sm flex items-center justify-center gap-2 active:scale-[0.98] transition-all disabled:opacity-50 shadow-soft-sm"
           >
             <Check class="w-4 h-4 stroke-[3]" />
-            <span>{{ isLoading ? 'Guardando...' : 'Guardar Registro' }}</span>
+            <span>{{ isLoading ? 'Guardando...' : 'Guardar Registro Combinado' }}</span>
           </button>
         </div>
       </form>
@@ -240,3 +333,4 @@ const handleSubmit = () => {
     </div>
   </div>
 </template>
+

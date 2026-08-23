@@ -130,9 +130,17 @@ const combinedHistory = computed<UnifiedActivity[]>(() => {
     props.feedings.forEach(f => {
       const fLocalDate = new Date(f.started_at).toLocaleDateString('en-CA');
       if (showAllHistory.value || allowedDates.has(fLocalDate) || f.started_at.startsWith(props.selectedDate)) {
+        const notes = f.notes || '';
         let title = 'Lactancia';
-        if (f.feeding_type === 'bottle') {
-          title = `Biberón (${f.amount_ml || 0} ml)`;
+
+        if (notes.includes('Combinada')) {
+          title = 'Toma Combinada';
+        } else if (f.feeding_type === 'bottle' || (f.amount_ml && f.amount_ml > 0)) {
+          if (notes.includes('Materna')) {
+            title = `Bib. Leche Materna (${f.amount_ml || 0} ml)`;
+          } else {
+            title = `Bib. Fórmula (${f.amount_ml || 0} ml)`;
+          }
         } else if (f.breast_side === 'left') {
           title = 'Pecho Izquierdo';
         } else if (f.breast_side === 'right') {
@@ -140,6 +148,7 @@ const combinedHistory = computed<UnifiedActivity[]>(() => {
         } else if (f.breast_side === 'both') {
           title = 'Ambos Pechos (I + D)';
         }
+
         items.push({
           id: f.id,
           type: 'feeding',
@@ -399,11 +408,16 @@ const combinedHistory = computed<UnifiedActivity[]>(() => {
 
     <!-- 2. Feeding Metrics Section -->
     <div class="pt-2 border-t border-borderSubtle space-y-3">
-      <div class="flex items-center gap-2 mb-1">
-        <div class="w-7 h-7 rounded-lg bg-breastLeft-soft flex items-center justify-center text-breastLeft">
-          <Baby class="w-4 h-4" />
+      <div class="flex items-center justify-between mb-1">
+        <div class="flex items-center gap-2">
+          <div class="w-7 h-7 rounded-lg bg-breastLeft-soft flex items-center justify-center text-breastLeft">
+            <Baby class="w-4 h-4" />
+          </div>
+          <h2 class="text-xs font-bold uppercase tracking-wider text-mutedText">Métricas de Lactancia (Hoy)</h2>
         </div>
-        <h2 class="text-xs font-bold uppercase tracking-wider text-mutedText">Métricas de Lactancia (Hoy)</h2>
+        <span v-if="stats.mixedCount > 0" class="text-[10px] font-bold text-warningSoft bg-warningSoft-soft px-2 py-0.5 rounded-full border border-warningSoft-border">
+          {{ stats.mixedCount }} combinadas
+        </span>
       </div>
 
       <div class="grid grid-cols-3 gap-2">
@@ -429,23 +443,34 @@ const combinedHistory = computed<UnifiedActivity[]>(() => {
         </div>
       </div>
 
-      <!-- Balance Bar -->
+      <!-- 4-Way Balance Bar (Left Breast, Right Breast, Maternal Bottle, Formula Bottle) -->
       <div class="p-3 rounded-2xl bg-subtle border border-borderSubtle">
         <div class="flex items-center justify-between text-xs font-semibold text-mutedText mb-1.5">
-          <span>Balance de Pecho / Biberón</span>
+          <span>Balance de Formatos</span>
         </div>
         <div class="h-2.5 w-full bg-borderSubtle rounded-full overflow-hidden flex">
-          <div class="h-full bg-breastLeft transition-all duration-500" :style="{ width: `${stats.leftPercentage}%` }" />
-          <div class="h-full bg-breastRight transition-all duration-500" :style="{ width: `${stats.rightPercentage}%` }" />
-          <div v-if="stats.bottlePercentage > 0" class="h-full bg-bottle transition-all duration-500" :style="{ width: `${stats.bottlePercentage}%` }" />
+          <div class="h-full bg-breastLeft transition-all duration-500" :style="{ width: `${stats.leftPercentage}%` }" title="Pecho Izquierdo" />
+          <div class="h-full bg-breastRight transition-all duration-500" :style="{ width: `${stats.rightPercentage}%` }" title="Pecho Derecho" />
+          <div v-if="stats.bottleMaternalPercentage > 0" class="h-full bg-bottle transition-all duration-500" :style="{ width: `${stats.bottleMaternalPercentage}%` }" title="Biberón Leche Materna" />
+          <div v-if="stats.bottleFormulaPercentage > 0" class="h-full bg-warningSoft transition-all duration-500" :style="{ width: `${stats.bottleFormulaPercentage}%` }" title="Biberón Fórmula" />
         </div>
-        <div class="flex items-center justify-between mt-1.5 text-[10px] font-medium">
-          <span class="text-breastLeft">Izq: {{ stats.leftPercentage }}%</span>
-          <span class="text-breastRight">Der: {{ stats.rightPercentage }}%</span>
-          <span v-if="stats.bottlePercentage > 0" class="text-bottle">Bib: {{ stats.bottlePercentage }}%</span>
+        <div class="grid grid-cols-2 sm:grid-cols-4 gap-1 mt-2 text-[10px] font-semibold">
+          <span class="text-breastLeft flex items-center gap-1">
+            <span class="w-2 h-2 rounded-full bg-breastLeft inline-block" /> Izq: {{ stats.leftPercentage }}%
+          </span>
+          <span class="text-breastRight flex items-center gap-1">
+            <span class="w-2 h-2 rounded-full bg-breastRight inline-block" /> Der: {{ stats.rightPercentage }}%
+          </span>
+          <span class="text-bottle flex items-center gap-1">
+            <span class="w-2 h-2 rounded-full bg-bottle inline-block" /> Mat: {{ stats.bottleMaternalPercentage }}%
+          </span>
+          <span class="text-warningSoft flex items-center gap-1">
+            <span class="w-2 h-2 rounded-full bg-warningSoft inline-block" /> Fórm: {{ stats.bottleFormulaPercentage }}%
+          </span>
         </div>
       </div>
     </div>
+
 
     <!-- 3. Unified Chronological Activity History with Filter -->
     <div class="pt-2 border-t border-borderSubtle space-y-3">
