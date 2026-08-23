@@ -20,6 +20,17 @@ const activeSession = ref<ActiveFeedingSession>({
 
 let timerInterval: ReturnType<typeof setInterval> | null = null;
 
+const STORAGE_KEY = 'baby_active_feeding_session';
+
+const saveToStorage = () => {
+  if (typeof window === 'undefined') return;
+  if (activeSession.value.isActive) {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(activeSession.value));
+  } else {
+    localStorage.removeItem(STORAGE_KEY);
+  }
+};
+
 export const useFeedingTracker = () => {
   const supabase = useSupabaseClient();
 
@@ -40,6 +51,7 @@ export const useFeedingTracker = () => {
           activeSession.value.rightSeconds += deltaSeconds;
         }
         activeSession.value.sideStartedAt = now;
+        saveToStorage();
       }
     }, 1000);
   };
@@ -51,7 +63,36 @@ export const useFeedingTracker = () => {
     }
   };
 
-  // 2. Fetch Feedings
+  const restoreFromStorage = () => {
+    if (typeof window === 'undefined') return;
+    try {
+      const raw = localStorage.getItem(STORAGE_KEY);
+      if (raw) {
+        const saved = JSON.parse(raw) as ActiveFeedingSession;
+        if (saved && saved.isActive) {
+          if (saved.activeSide && saved.sideStartedAt) {
+            const delta = Math.floor((Date.now() - saved.sideStartedAt) / 1000);
+            if (delta > 0) {
+              if (saved.activeSide === 'left') {
+                saved.leftSeconds += delta;
+              } else if (saved.activeSide === 'right') {
+                saved.rightSeconds += delta;
+              }
+            }
+            saved.sideStartedAt = Date.now();
+          }
+          activeSession.value = saved;
+          if (saved.activeSide) {
+            startTimerTicker();
+          }
+        }
+      }
+    } catch (e) {
+      console.error('Failed to restore feeding session from localStorage:', e);
+    }
+  };
+
+  // 2. Fetch Feedings (Expanded to 1000 for total historical control)
   const fetchFeedings = async () => {
     isLoading.value = true;
     error.value = null;
@@ -60,7 +101,7 @@ export const useFeedingTracker = () => {
         .from('feedings')
         .select('*')
         .order('started_at', { ascending: false })
-        .limit(100);
+        .limit(1000);
 
       if (sbError) throw sbError;
       feedings.value = (data as Feeding[]) || [];
@@ -86,6 +127,7 @@ export const useFeedingTracker = () => {
       amountMl: null,
       notes: ''
     };
+    saveToStorage();
     startTimerTicker();
   };
 
@@ -106,6 +148,7 @@ export const useFeedingTracker = () => {
 
     activeSession.value.activeSide = side;
     activeSession.value.sideStartedAt = now;
+    saveToStorage();
     startTimerTicker();
   };
 
@@ -124,6 +167,7 @@ export const useFeedingTracker = () => {
     activeSession.value.activeSide = null;
     activeSession.value.sideStartedAt = null;
     stopTimerTicker();
+    saveToStorage();
   };
 
   // 6. Resume Active Session with Side
@@ -132,6 +176,7 @@ export const useFeedingTracker = () => {
     const now = Date.now();
     activeSession.value.activeSide = side;
     activeSession.value.sideStartedAt = now;
+    saveToStorage();
     startTimerTicker();
   };
 
@@ -180,6 +225,7 @@ export const useFeedingTracker = () => {
       amountMl: null,
       notes: ''
     };
+    saveToStorage();
   };
 
   // 9. Manual Creation
@@ -321,6 +367,7 @@ export const useFeedingTracker = () => {
     cancelActiveSession,
     createManualFeeding,
     deleteFeeding,
-    resetState
+    resetState,
+    restoreFromStorage
   };
 };

@@ -1,9 +1,28 @@
 import { ref, computed } from 'vue';
-import type { SleepLog, CreateSleepDTO, ActiveSleepSession, SleepStatsSummary } from '~/types/baby-tracker';
+import type { 
+  SleepLog, 
+  CreateSleepDTO, 
+  ActiveSleepSession, 
+  SleepStatsSummary,
+  TimeframePeriod,
+  DaySleepMetric,
+  PeriodSleepStatsSummary 
+} from '~/types/baby-tracker';
 
 const sleepLogs = ref<SleepLog[]>([]);
 const isLoading = ref<boolean>(false);
 const error = ref<string | null>(null);
+
+const getTodayString = () => {
+  const d = new Date();
+  const year = d.getFullYear();
+  const month = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+};
+
+const selectedDate = ref<string>(getTodayString());
+const selectedPeriod = ref<TimeframePeriod>('day');
 
 const activeSession = ref<ActiveSleepSession>({
   isActive: false,
@@ -15,6 +34,17 @@ const activeSession = ref<ActiveSleepSession>({
 });
 
 let sleepInterval: ReturnType<typeof setInterval> | null = null;
+
+const STORAGE_KEY = 'baby_active_sleep_session';
+
+const saveToStorage = () => {
+  if (typeof window === 'undefined') return;
+  if (activeSession.value.isActive) {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(activeSession.value));
+  } else {
+    localStorage.removeItem(STORAGE_KEY);
+  }
+};
 
 export const useSleepTracker = () => {
   const supabase = useSupabaseClient();
@@ -31,6 +61,7 @@ export const useSleepTracker = () => {
       if (delta > 0) {
         activeSession.value.elapsedSeconds += delta;
         activeSession.value.lastTickTime = now;
+        saveToStorage();
       }
     }, 1000);
   };
@@ -42,7 +73,32 @@ export const useSleepTracker = () => {
     }
   };
 
-  // 2. Fetch Sleep Logs
+  const restoreFromStorage = () => {
+    if (typeof window === 'undefined') return;
+    try {
+      const raw = localStorage.getItem(STORAGE_KEY);
+      if (raw) {
+        const saved = JSON.parse(raw) as ActiveSleepSession;
+        if (saved && saved.isActive) {
+          if (!saved.isPaused && saved.lastTickTime) {
+            const delta = Math.floor((Date.now() - saved.lastTickTime) / 1000);
+            if (delta > 0) {
+              saved.elapsedSeconds += delta;
+            }
+            saved.lastTickTime = Date.now();
+          }
+          activeSession.value = saved;
+          if (!saved.isPaused) {
+            startTimerTicker();
+          }
+        }
+      }
+    } catch (e) {
+      console.error('Failed to restore sleep session from localStorage:', e);
+    }
+  };
+
+  // 2. Fetch Sleep Logs (Expanded to 1000 for total historical control)
   const fetchSleepLogs = async () => {
     isLoading.value = true;
     error.value = null;
@@ -51,7 +107,7 @@ export const useSleepTracker = () => {
         .from('sleep_logs')
         .select('*')
         .order('started_at', { ascending: false })
-        .limit(100);
+        .limit(1000);
 
       if (sbError) throw sbError;
       sleepLogs.value = (data as SleepLog[]) || [];
@@ -74,6 +130,7 @@ export const useSleepTracker = () => {
       elapsedSeconds: 0,
       notes: ''
     };
+    saveToStorage();
     startTimerTicker();
   };
 
@@ -90,6 +147,7 @@ export const useSleepTracker = () => {
     activeSession.value.isPaused = true;
     activeSession.value.lastTickTime = null;
     stopTimerTicker();
+    saveToStorage();
   };
 
   // 5. Resume Sleep Session
@@ -97,6 +155,7 @@ export const useSleepTracker = () => {
     if (!activeSession.value.isActive) return;
     activeSession.value.isPaused = false;
     activeSession.value.lastTickTime = Date.now();
+    saveToStorage();
     startTimerTicker();
   };
 
@@ -129,6 +188,7 @@ export const useSleepTracker = () => {
       elapsedSeconds: 0,
       notes: ''
     };
+    saveToStorage();
   };
 
   // 8. Manual Sleep Entry
@@ -182,49 +242,221 @@ export const useSleepTracker = () => {
     return sleepLogs.value[0];
   });
 
-  // 11. Computed: Sleep Statistics for Today
-  const sleepStats = computed<SleepStatsSummary>(() => {
-    const today = new Date().toISOString().split('T')[0];
-    const todaySleeps = sleepLogs.value.filter(s => s.started_at.startsWith(today));
+  // 11. Helper to format seconds to "Xh Ym"
+  const formatSecondsToReadable = (seconds: number) => {
+    const h = Math.floor(seconds / 3600);
+    const m = Math.floor((seconds % 3600) / 60);
+    if (h === 0) return `${m}m`;
+    return `${h}h ${m > 0 ? `${m}m` : ''}`.trim();
+  };
 
-    const napCountToday = todaySleeps.length;
-    let totalSleepSecondsToday = 0;
+  // 12. Helper to get sleep logs for a specific local date YYYY-MM-DD
+  const getLogsForDate = (dateStr: string) => {
+    return sleepLogs.value.filter(s => {
+      const logLocalDate = new Date(s.started_at).toLocaleDateString('en-CA'); // 'YYYY-MM-DD'
+      return logLocalDate === dateStr || s.started_at.startsWith(dateStr);
+    });
+  };
+
+  // 13. Calculate Stats for any single date
+  const getSleepStatsForDate = (dateStr: string): SleepStatsSummary => {
+    const dayLogs = getLogsForDate(dateStr);
+    const napCount = dayLogs.length;
+    let totalSleepSeconds = 0;
     let longestNapSec = 0;
 
-    todaySleeps.forEach(s => {
+    dayLogs.forEach(s => {
       const duration = s.duration_seconds || 0;
-      totalSleepSecondsToday += duration;
+      totalSleepSeconds += duration;
       if (duration > longestNapSec) {
         longestNapSec = duration;
       }
     });
 
-    const totalHours = Math.floor(totalSleepSecondsToday / 3600);
-    const totalMinutes = Math.floor((totalSleepSecondsToday % 3600) / 60);
-    const totalSleepFormatted = `${totalHours}h ${totalMinutes}m`;
-
-    const avgNapMinutesToday = napCountToday > 0 
-      ? Math.round((totalSleepSecondsToday / napCountToday) / 60) 
-      : 0;
-
-    const longestNapMinutesToday = Math.round(longestNapSec / 60);
+    const avgNapMinutes = napCount > 0 ? Math.round((totalSleepSeconds / napCount) / 60) : 0;
+    const longestNapMinutes = Math.round(longestNapSec / 60);
 
     return {
-      totalSleepSecondsToday,
-      totalSleepFormatted,
-      napCountToday,
-      avgNapMinutesToday,
-      longestNapMinutesToday,
-      lastSleep: lastSleepLog.value
+      totalSleepSecondsToday: totalSleepSeconds,
+      totalSleepFormatted: formatSecondsToReadable(totalSleepSeconds),
+      napCountToday: napCount,
+      avgNapMinutesToday: avgNapMinutes,
+      longestNapMinutesToday: longestNapMinutes,
+      lastSleep: dayLogs.length > 0 ? dayLogs[0] : null,
+      selectedDate: dateStr
     };
+  };
+
+  // 14. Computed: Today's sleep stats (backward-compatible)
+  const sleepStats = computed<SleepStatsSummary>(() => {
+    return getSleepStatsForDate(getTodayString());
   });
 
-  // 12. Reset State on Logout
+  // 15. Computed: Selected date's sleep stats
+  const selectedDateSleepStats = computed<SleepStatsSummary>(() => {
+    return getSleepStatsForDate(selectedDate.value);
+  });
+
+  // 16. Calculate Comprehensive Period Stats (Day, Week, Month)
+  const getSleepStatsForPeriod = (period: TimeframePeriod, targetDateStr: string): PeriodSleepStatsSummary => {
+    const today = getTodayString();
+    const target = new Date(targetDateStr + 'T12:00:00');
+    const dayNamesShort = ['D', 'L', 'M', 'X', 'J', 'V', 'S'];
+    const monthNames = ['Enero', 'Febrero', 'Marzo', 'Abril', 'Mayo', 'Junio', 'Julio', 'Agosto', 'Septiembre', 'Octubre', 'Noviembre', 'Diciembre'];
+
+    const datesToInclude: { dateStr: string; label: string; short: string }[] = [];
+    let periodLabel = '';
+
+    if (period === 'day') {
+      const isToday = targetDateStr === today;
+      const dayName = target.toLocaleDateString('es-ES', { weekday: 'short', day: 'numeric', month: 'short' });
+      periodLabel = isToday ? `Hoy (${dayName})` : dayName;
+      datesToInclude.push({
+        dateStr: targetDateStr,
+        label: isToday ? 'Hoy' : target.toLocaleDateString('es-ES', { day: 'numeric', month: 'short' }),
+        short: dayNamesShort[target.getDay()]
+      });
+    } else if (period === 'week') {
+      // 7 days ending at target date or Mon-Sun block
+      // Let's create a 7-day window ending at targetDateStr (or current week Mon-Sun)
+      const currentDay = target.getDay(); // 0 is Sun, 1 is Mon...
+      const diffToMonday = (currentDay + 6) % 7; // days since Monday
+      const monday = new Date(target);
+      monday.setDate(target.getDate() - diffToMonday);
+
+      for (let i = 0; i < 7; i++) {
+        const d = new Date(monday);
+        d.setDate(monday.getDate() + i);
+        const dStr = d.toLocaleDateString('en-CA');
+        const isToday = dStr === today;
+        datesToInclude.push({
+          dateStr: dStr,
+          label: isToday ? 'Hoy' : d.toLocaleDateString('es-ES', { day: 'numeric', month: 'short' }),
+          short: dayNamesShort[d.getDay()]
+        });
+      }
+
+      const firstDate = datesToInclude[0].dateStr;
+      const lastDate = datesToInclude[6].dateStr;
+      const startFmt = new Date(firstDate + 'T12:00:00').toLocaleDateString('es-ES', { day: 'numeric', month: 'short' });
+      const endFmt = new Date(lastDate + 'T12:00:00').toLocaleDateString('es-ES', { day: 'numeric', month: 'short' });
+      periodLabel = `Semana: ${startFmt} - ${endFmt}`;
+    } else if (period === 'month') {
+      // Current calendar month of target date
+      const year = target.getFullYear();
+      const month = target.getMonth();
+      const daysInMonth = new Date(year, month + 1, 0).getDate();
+
+      for (let day = 1; day <= daysInMonth; day++) {
+        const d = new Date(year, month, day);
+        const dStr = d.toLocaleDateString('en-CA');
+        const isToday = dStr === today;
+        datesToInclude.push({
+          dateStr: dStr,
+          label: `${day}`,
+          short: `${day}`
+        });
+      }
+
+      periodLabel = `${monthNames[month]} ${year}`;
+    }
+
+    // Build day-by-day metrics
+    let totalPeriodSeconds = 0;
+    let totalPeriodNaps = 0;
+    let longestNapPeriodSec = 0;
+    const periodLogs: SleepLog[] = [];
+
+    const dailyBreakdown: DaySleepMetric[] = datesToInclude.map(item => {
+      const dayLogs = getLogsForDate(item.dateStr);
+      periodLogs.push(...dayLogs);
+      
+      let daySec = 0;
+      dayLogs.forEach(l => {
+        const dur = l.duration_seconds || 0;
+        daySec += dur;
+        if (dur > longestNapPeriodSec) {
+          longestNapPeriodSec = dur;
+        }
+      });
+
+      totalPeriodSeconds += daySec;
+      totalPeriodNaps += dayLogs.length;
+
+      return {
+        date: item.dateStr,
+        dayLabel: item.label,
+        dayShort: item.short,
+        totalSleepSeconds: daySec,
+        totalSleepFormatted: formatSecondsToReadable(daySec),
+        totalHoursDecimal: Math.round((daySec / 3600) * 10) / 10,
+        napCount: dayLogs.length,
+        isTargetDay: item.dateStr === targetDateStr
+      };
+    });
+
+    const daysCount = datesToInclude.length || 1;
+    const dailyAvgSeconds = Math.round(totalPeriodSeconds / daysCount);
+    const dailyAvgHoursDecimal = Math.round((dailyAvgSeconds / 3600) * 10) / 10;
+    const dailyAvgNaps = Math.round((totalPeriodNaps / daysCount) * 10) / 10;
+    const avgNapMinutes = totalPeriodNaps > 0 ? Math.round((totalPeriodSeconds / totalPeriodNaps) / 60) : 0;
+    const longestNapMinutes = Math.round(longestNapPeriodSec / 60);
+
+    return {
+      period,
+      targetDate: targetDateStr,
+      periodLabel,
+      totalSleepSeconds: totalPeriodSeconds,
+      totalSleepFormatted: formatSecondsToReadable(totalPeriodSeconds),
+      dailyAvgSleepFormatted: formatSecondsToReadable(dailyAvgSeconds),
+      dailyAvgHoursDecimal,
+      napCount: totalPeriodNaps,
+      dailyAvgNaps,
+      avgNapMinutes,
+      longestNapMinutes,
+      dailyBreakdown,
+      logs: periodLogs.sort((a, b) => new Date(b.started_at).getTime() - new Date(a.started_at).getTime())
+    };
+  };
+
+  // 17. Computed: Current Period Stats
+  const currentPeriodSleepStats = computed<PeriodSleepStatsSummary>(() => {
+    return getSleepStatsForPeriod(selectedPeriod.value, selectedDate.value);
+  });
+
+  // 18. Date & Period Navigation Helpers
+  const setSelectedDate = (date: string) => {
+    selectedDate.value = date;
+  };
+
+  const setSelectedPeriod = (period: TimeframePeriod) => {
+    selectedPeriod.value = period;
+  };
+
+  const navigateDate = (step: number) => {
+    const d = new Date(selectedDate.value + 'T12:00:00');
+    if (selectedPeriod.value === 'day') {
+      d.setDate(d.getDate() + step);
+    } else if (selectedPeriod.value === 'week') {
+      d.setDate(d.getDate() + (step * 7));
+    } else if (selectedPeriod.value === 'month') {
+      d.setMonth(d.getMonth() + step);
+    }
+    selectedDate.value = d.toLocaleDateString('en-CA');
+  };
+
+  const goToToday = () => {
+    selectedDate.value = getTodayString();
+  };
+
+  // 19. Reset State on Logout
   const resetState = () => {
     cancelSleepSession();
     sleepLogs.value = [];
     isLoading.value = false;
     error.value = null;
+    selectedDate.value = getTodayString();
+    selectedPeriod.value = 'day';
   };
 
   return {
@@ -234,6 +466,10 @@ export const useSleepTracker = () => {
     activeSession,
     lastSleepLog,
     sleepStats,
+    selectedDate,
+    selectedPeriod,
+    selectedDateSleepStats,
+    currentPeriodSleepStats,
     fetchSleepLogs,
     startSleepSession,
     pauseSleepSession,
@@ -242,6 +478,14 @@ export const useSleepTracker = () => {
     cancelSleepSession,
     createManualSleep,
     deleteSleep,
-    resetState
+    resetState,
+    restoreFromStorage,
+    setSelectedDate,
+    setSelectedPeriod,
+    navigateDate,
+    goToToday,
+    getSleepStatsForDate,
+    getSleepStatsForPeriod
   };
 };
+

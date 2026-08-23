@@ -1,22 +1,83 @@
 <script setup lang="ts">
 import { ref, computed } from 'vue';
-import { BarChart2, Clock, Trash2, Calendar, Moon, Baby, MessageSquare, Filter } from 'lucide-vue-next';
-import type { Feeding, FeedingStatsSummary, SleepLog, SleepStatsSummary } from '~/types/baby-tracker';
+import { 
+  BarChart2, 
+  Clock, 
+  Trash2, 
+  Calendar, 
+  Moon, 
+  Baby, 
+  MessageSquare, 
+  Filter, 
+  ChevronLeft, 
+  ChevronRight, 
+  RotateCcw,
+  Sparkles,
+  TrendingUp,
+  Award
+} from 'lucide-vue-next';
+import type { 
+  Feeding, 
+  FeedingStatsSummary, 
+  SleepLog, 
+  SleepStatsSummary,
+  TimeframePeriod,
+  PeriodSleepStatsSummary 
+} from '~/types/baby-tracker';
 
-const props = defineProps<{
+const props = withDefaults(defineProps<{
   stats: FeedingStatsSummary;
   feedings: Feeding[];
   sleepStats: SleepStatsSummary;
   sleepLogs: SleepLog[];
+  selectedPeriod?: TimeframePeriod;
+  selectedDate?: string;
+  periodSleepStats?: PeriodSleepStatsSummary;
   isLoading?: boolean;
-}>();
+}>(), {
+  selectedPeriod: 'day',
+  selectedDate: () => {
+    const d = new Date();
+    const y = d.getFullYear();
+    const m = String(d.getMonth() + 1).padStart(2, '0');
+    const day = String(d.getDate()).padStart(2, '0');
+    return `${y}-${m}-${day}`;
+  }
+});
 
 const emit = defineEmits<{
   (e: 'delete-feeding', id: string): void;
   (e: 'delete-sleep', id: string): void;
+  (e: 'update:period', period: TimeframePeriod): void;
+  (e: 'update:date', date: string): void;
+  (e: 'navigate-date', step: number): void;
+  (e: 'go-today'): void;
 }>();
 
 const activeHistoryFilter = ref<'all' | 'feedings' | 'sleep'>('all');
+const showAllHistory = ref<boolean>(false);
+
+const todayStr = computed(() => {
+  const d = new Date();
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${y}-${m}-${day}`;
+});
+
+const isCurrentPeriodToday = computed(() => {
+  if (props.selectedPeriod === 'day') {
+    return props.selectedDate === todayStr.value;
+  }
+  if (props.selectedPeriod === 'week') {
+    // Check if today is inside the current week breakdown
+    return props.periodSleepStats?.dailyBreakdown.some(d => d.date === todayStr.value) ?? false;
+  }
+  if (props.selectedPeriod === 'month') {
+    return props.selectedDate.slice(0, 7) === todayStr.value.slice(0, 7);
+  }
+  return false;
+});
 
 const formatDuration = (seconds: number) => {
   const h = Math.floor(seconds / 3600);
@@ -37,6 +98,13 @@ const formatDate = (isoString: string) => {
   return d.toLocaleDateString([], { day: '2-digit', month: 'short' });
 };
 
+// Max hours decimal in breakdown for chart scaling
+const maxChartHours = computed(() => {
+  if (!props.periodSleepStats || props.periodSleepStats.dailyBreakdown.length === 0) return 16;
+  const max = Math.max(...props.periodSleepStats.dailyBreakdown.map(d => d.totalHoursDecimal), 12);
+  return Math.ceil(max);
+});
+
 // Unified Chronological Activity History
 interface UnifiedActivity {
   id: string;
@@ -52,42 +120,54 @@ interface UnifiedActivity {
 const combinedHistory = computed<UnifiedActivity[]>(() => {
   const items: UnifiedActivity[] = [];
 
+  // Determine allowed date strings based on selected period
+  const allowedDates = new Set<string>();
+  if (props.periodSleepStats?.dailyBreakdown && !showAllHistory.value) {
+    props.periodSleepStats.dailyBreakdown.forEach(d => allowedDates.add(d.date));
+  }
+
   if (activeHistoryFilter.value === 'all' || activeHistoryFilter.value === 'feedings') {
     props.feedings.forEach(f => {
-      let title = 'Lactancia';
-      if (f.feeding_type === 'bottle') {
-        title = `Biberón (${f.amount_ml || 0} ml)`;
-      } else if (f.breast_side === 'left') {
-        title = 'Pecho Izquierdo';
-      } else if (f.breast_side === 'right') {
-        title = 'Pecho Derecho';
-      } else if (f.breast_side === 'both') {
-        title = 'Ambos Pechos (I + D)';
+      const fLocalDate = new Date(f.started_at).toLocaleDateString('en-CA');
+      if (showAllHistory.value || allowedDates.has(fLocalDate) || f.started_at.startsWith(props.selectedDate)) {
+        let title = 'Lactancia';
+        if (f.feeding_type === 'bottle') {
+          title = `Biberón (${f.amount_ml || 0} ml)`;
+        } else if (f.breast_side === 'left') {
+          title = 'Pecho Izquierdo';
+        } else if (f.breast_side === 'right') {
+          title = 'Pecho Derecho';
+        } else if (f.breast_side === 'both') {
+          title = 'Ambos Pechos (I + D)';
+        }
+        items.push({
+          id: f.id,
+          type: 'feeding',
+          started_at: f.started_at,
+          ended_at: f.ended_at,
+          duration_seconds: f.duration_seconds,
+          title,
+          notes: f.notes,
+          breast_side: f.breast_side
+        });
       }
-      items.push({
-        id: f.id,
-        type: 'feeding',
-        started_at: f.started_at,
-        ended_at: f.ended_at,
-        duration_seconds: f.duration_seconds,
-        title,
-        notes: f.notes,
-        breast_side: f.breast_side
-      });
     });
   }
 
   if (activeHistoryFilter.value === 'all' || activeHistoryFilter.value === 'sleep') {
     props.sleepLogs.forEach(s => {
-      items.push({
-        id: s.id,
-        type: 'sleep',
-        started_at: s.started_at,
-        ended_at: s.ended_at,
-        duration_seconds: s.duration_seconds,
-        title: 'Sueño / Siesta',
-        notes: s.notes
-      });
+      const sLocalDate = new Date(s.started_at).toLocaleDateString('en-CA');
+      if (showAllHistory.value || allowedDates.has(sLocalDate) || s.started_at.startsWith(props.selectedDate)) {
+        items.push({
+          id: s.id,
+          type: 'sleep',
+          started_at: s.started_at,
+          ended_at: s.ended_at,
+          duration_seconds: s.duration_seconds,
+          title: 'Sueño / Siesta',
+          notes: s.notes
+        });
+      }
     });
   }
 
@@ -98,16 +178,235 @@ const combinedHistory = computed<UnifiedActivity[]>(() => {
 <template>
   <section class="w-full bg-surface rounded-3xl p-5 shadow-soft-md border border-borderSubtle transition-all space-y-6">
     
-    <!-- 1. Feeding Metrics Section -->
-    <div>
-      <div class="flex items-center gap-2 mb-3">
+    <!-- 0. Timeframe Range Selector Tabs & Date Navigation -->
+    <div class="space-y-3">
+      <!-- Period Tabs (Día / Semana / Mes) -->
+      <div class="flex items-center bg-subtle p-1 rounded-2xl border border-borderSubtle">
+        <button
+          type="button"
+          @click="emit('update:period', 'day')"
+          class="flex-1 py-1.5 rounded-xl text-xs font-bold transition-all flex items-center justify-center gap-1.5"
+          :class="selectedPeriod === 'day' ? 'bg-surface text-primaryText shadow-soft-xs' : 'text-mutedText hover:text-secondaryText'"
+        >
+          <Calendar class="w-3.5 h-3.5" />
+          <span>Día</span>
+        </button>
+
+        <button
+          type="button"
+          @click="emit('update:period', 'week')"
+          class="flex-1 py-1.5 rounded-xl text-xs font-bold transition-all flex items-center justify-center gap-1.5"
+          :class="selectedPeriod === 'week' ? 'bg-surface text-primaryText shadow-soft-xs' : 'text-mutedText hover:text-secondaryText'"
+        >
+          <BarChart2 class="w-3.5 h-3.5" />
+          <span>Semana</span>
+        </button>
+
+        <button
+          type="button"
+          @click="emit('update:period', 'month')"
+          class="flex-1 py-1.5 rounded-xl text-xs font-bold transition-all flex items-center justify-center gap-1.5"
+          :class="selectedPeriod === 'month' ? 'bg-surface text-primaryText shadow-soft-xs' : 'text-mutedText hover:text-secondaryText'"
+        >
+          <TrendingUp class="w-3.5 h-3.5" />
+          <span>Mes</span>
+        </button>
+      </div>
+
+      <!-- Navigation Header for Selected Period -->
+      <div class="flex items-center justify-between bg-subtle p-2 rounded-2xl border border-borderSubtle">
+        <button
+          type="button"
+          @click="emit('navigate-date', -1)"
+          class="p-2 rounded-xl bg-surface hover:bg-borderSubtle text-primaryText transition-all active:scale-95 border border-borderSubtle/60 shadow-xs"
+          :title="selectedPeriod === 'day' ? 'Día anterior' : selectedPeriod === 'week' ? 'Semana anterior' : 'Mes anterior'"
+        >
+          <ChevronLeft class="w-4 h-4" />
+        </button>
+
+        <div class="relative flex items-center gap-1.5 cursor-pointer text-center">
+          <span class="text-xs font-extrabold text-primaryText capitalize">
+            {{ periodSleepStats?.periodLabel || selectedDate }}
+          </span>
+          <input 
+            v-if="selectedPeriod === 'day'"
+            type="date"
+            :value="selectedDate"
+            :max="todayStr"
+            @change="emit('update:date', ($event.target as HTMLInputElement).value)"
+            class="absolute inset-0 opacity-0 cursor-pointer w-full h-full"
+            title="Elegir fecha específica"
+          />
+        </div>
+
+        <div class="flex items-center gap-1">
+          <button
+            v-if="!isCurrentPeriodToday"
+            type="button"
+            @click="emit('go-today')"
+            class="px-2 py-1 rounded-xl bg-bottle-soft hover:bg-bottle-border text-bottle font-bold text-[10px] transition-all flex items-center gap-1 border border-bottle-border"
+            title="Volver a la fecha actual"
+          >
+            <RotateCcw class="w-3 h-3" />
+            <span>{{ selectedPeriod === 'day' ? 'Hoy' : selectedPeriod === 'week' ? 'Esta semana' : 'Este mes' }}</span>
+          </button>
+
+          <button
+            type="button"
+            :disabled="isCurrentPeriodToday"
+            @click="emit('navigate-date', 1)"
+            class="p-2 rounded-xl bg-surface hover:bg-borderSubtle text-primaryText transition-all active:scale-95 border border-borderSubtle/60 shadow-xs disabled:opacity-30 disabled:pointer-events-none"
+            :title="selectedPeriod === 'day' ? 'Día siguiente' : selectedPeriod === 'week' ? 'Semana siguiente' : 'Mes siguiente'"
+          >
+            <ChevronRight class="w-4 h-4" />
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <!-- 1. Sleep Metrics Section (Temporal & Advanced) -->
+    <div class="space-y-3">
+      <div class="flex items-center justify-between">
+        <div class="flex items-center gap-2">
+          <div class="w-7 h-7 rounded-lg bg-bottle-soft flex items-center justify-center text-bottle">
+            <Moon class="w-4 h-4" />
+          </div>
+          <h2 class="text-xs font-bold uppercase tracking-wider text-mutedText">
+            Métricas de Sueño ({{ selectedPeriod === 'day' ? 'Diarias' : selectedPeriod === 'week' ? 'Semanales' : 'Mensuales' }})
+          </h2>
+        </div>
+
+        <span class="text-[11px] font-bold text-bottle bg-bottle-soft px-2 py-0.5 rounded-full border border-bottle-border">
+          {{ periodSleepStats?.totalSleepFormatted || '0m' }} total
+        </span>
+      </div>
+
+      <!-- KPI Summary Cards Grid -->
+      <div class="grid grid-cols-2 sm:grid-cols-4 gap-2">
+        <div class="p-3 rounded-2xl bg-subtle border border-borderSubtle text-center">
+          <span class="block text-[10px] font-semibold text-mutedText uppercase">
+            {{ selectedPeriod === 'day' ? 'Total Sueño' : 'Media / Día' }}
+          </span>
+          <span class="text-base font-black text-primaryText font-mono mt-0.5 block truncate">
+            {{ selectedPeriod === 'day' ? (periodSleepStats?.totalSleepFormatted || '0m') : `${periodSleepStats?.dailyAvgSleepFormatted || '0m'}` }}
+          </span>
+        </div>
+
+        <div class="p-3 rounded-2xl bg-subtle border border-borderSubtle text-center">
+          <span class="block text-[10px] font-semibold text-mutedText uppercase">
+            {{ selectedPeriod === 'day' ? 'Siestas' : 'Total Siestas' }}
+          </span>
+          <span class="text-base font-black text-primaryText font-mono mt-0.5 block">
+            {{ periodSleepStats?.napCount || 0 }}
+            <span v-if="selectedPeriod !== 'day'" class="text-[10px] text-mutedText font-normal">
+              ({{ periodSleepStats?.dailyAvgNaps }}/d)
+            </span>
+          </span>
+        </div>
+
+        <div class="p-3 rounded-2xl bg-subtle border border-borderSubtle text-center">
+          <span class="block text-[10px] font-semibold text-mutedText uppercase">Media Siesta</span>
+          <span class="text-base font-black text-primaryText font-mono mt-0.5 block">
+            {{ periodSleepStats?.avgNapMinutes || 0 }}<span class="text-xs font-normal text-mutedText ml-0.5">min</span>
+          </span>
+        </div>
+
+        <div class="p-3 rounded-2xl bg-subtle border border-borderSubtle text-center">
+          <span class="block text-[10px] font-semibold text-mutedText uppercase">Más Larga</span>
+          <span class="text-base font-black text-primaryText font-mono mt-0.5 block">
+            {{ periodSleepStats?.longestNapMinutes || 0 }}<span class="text-xs font-normal text-mutedText ml-0.5">min</span>
+          </span>
+        </div>
+      </div>
+
+      <!-- Visual Sleep Distribution Chart (for Week and Month) -->
+      <div 
+        v-if="selectedPeriod !== 'day' && periodSleepStats && periodSleepStats.dailyBreakdown.length > 0"
+        class="p-4 rounded-2xl bg-subtle border border-borderSubtle space-y-3"
+      >
+        <div class="flex items-center justify-between text-xs font-bold text-primaryText">
+          <span class="flex items-center gap-1.5">
+            <BarChart2 class="w-3.5 h-3.5 text-bottle" />
+            <span>Distribución de Horas de Sueño</span>
+          </span>
+          <span class="text-[10px] text-mutedText font-mono">
+            Objetivo: ~14h / día
+          </span>
+        </div>
+
+        <!-- Weekly 7-Day Chart -->
+        <div v-if="selectedPeriod === 'week'" class="pt-3 pb-1 flex items-end justify-between gap-2 h-36">
+          <div 
+            v-for="day in periodSleepStats.dailyBreakdown" 
+            :key="day.date"
+            class="flex-1 flex flex-col items-center h-full justify-end group cursor-pointer"
+            :title="`${day.dayLabel}: ${day.totalSleepFormatted} (${day.napCount} siestas)`"
+            @click="emit('update:period', 'day'); emit('update:date', day.date)"
+          >
+            <!-- Value on top of bar -->
+            <span class="text-[9px] font-bold font-mono text-mutedText mb-1 group-hover:text-primaryText transition-colors">
+              {{ day.totalHoursDecimal > 0 ? `${day.totalHoursDecimal}h` : '0' }}
+            </span>
+
+            <!-- Vertical bar -->
+            <div class="w-full max-w-[28px] bg-borderSubtle rounded-t-xl overflow-hidden flex flex-col justify-end h-24 relative transition-all group-hover:ring-2 group-hover:ring-bottle/40">
+              <div 
+                class="w-full rounded-t-xl transition-all duration-500"
+                :class="day.isTargetDay || day.date === todayStr ? 'bg-bottle shadow-sm' : 'bg-bottle/60 group-hover:bg-bottle'"
+                :style="{ height: `${Math.min(100, Math.max(8, (day.totalHoursDecimal / maxChartHours) * 100))}%` }"
+              />
+            </div>
+
+            <!-- Day Label below bar -->
+            <span 
+              class="text-[10px] font-bold mt-1.5 transition-colors"
+              :class="day.isTargetDay || day.date === todayStr ? 'text-bottle' : 'text-mutedText'"
+            >
+              {{ day.dayShort }}
+            </span>
+          </div>
+        </div>
+
+        <!-- Monthly 30-Day Sparkline / Bar Grid -->
+        <div v-else-if="selectedPeriod === 'month'" class="pt-2 pb-1 space-y-2">
+          <div class="flex items-end justify-between gap-1 h-28">
+            <div 
+              v-for="day in periodSleepStats.dailyBreakdown" 
+              :key="day.date"
+              class="flex-1 flex flex-col items-center h-full justify-end group cursor-pointer"
+              :title="`Día ${day.dayLabel}: ${day.totalSleepFormatted}`"
+              @click="emit('update:period', 'day'); emit('update:date', day.date)"
+            >
+              <div class="w-full bg-borderSubtle rounded-t-sm overflow-hidden flex flex-col justify-end h-20 relative">
+                <div 
+                  class="w-full rounded-t-sm transition-all duration-300"
+                  :class="day.date === todayStr ? 'bg-bottle' : 'bg-bottle/60 group-hover:bg-bottle'"
+                  :style="{ height: `${Math.min(100, Math.max(6, (day.totalHoursDecimal / maxChartHours) * 100))}%` }"
+                />
+              </div>
+              <span class="text-[8px] text-mutedText mt-1 scale-90">
+                {{ Number(day.dayShort) % 5 === 0 || Number(day.dayShort) === 1 ? day.dayShort : '' }}
+              </span>
+            </div>
+          </div>
+          <p class="text-[10px] text-center text-mutedText">
+            Toca cualquier día para ver sus métricas detalladas
+          </p>
+        </div>
+
+      </div>
+    </div>
+
+    <!-- 2. Feeding Metrics Section -->
+    <div class="pt-2 border-t border-borderSubtle space-y-3">
+      <div class="flex items-center gap-2 mb-1">
         <div class="w-7 h-7 rounded-lg bg-breastLeft-soft flex items-center justify-center text-breastLeft">
           <Baby class="w-4 h-4" />
         </div>
         <h2 class="text-xs font-bold uppercase tracking-wider text-mutedText">Métricas de Lactancia (Hoy)</h2>
       </div>
 
-      <div class="grid grid-cols-3 gap-2 mb-3">
+      <div class="grid grid-cols-3 gap-2">
         <div class="p-3 rounded-2xl bg-subtle border border-borderSubtle text-center">
           <span class="block text-[10px] font-semibold text-mutedText uppercase">Tomas</span>
           <span class="text-lg font-extrabold text-primaryText font-mono mt-0.5 block">
@@ -148,42 +447,9 @@ const combinedHistory = computed<UnifiedActivity[]>(() => {
       </div>
     </div>
 
-    <!-- 2. Sleep Metrics Section -->
-    <div class="pt-2 border-t border-borderSubtle">
-      <div class="flex items-center gap-2 mb-3">
-        <div class="w-7 h-7 rounded-lg bg-bottle-soft flex items-center justify-center text-bottle">
-          <Moon class="w-4 h-4" />
-        </div>
-        <h2 class="text-xs font-bold uppercase tracking-wider text-mutedText">Métricas de Sueño (Hoy)</h2>
-      </div>
-
-      <div class="grid grid-cols-3 gap-2">
-        <div class="p-3 rounded-2xl bg-subtle border border-borderSubtle text-center">
-          <span class="block text-[10px] font-semibold text-mutedText uppercase">Total Sueño</span>
-          <span class="text-lg font-extrabold text-primaryText font-mono mt-0.5 block">
-            {{ sleepStats.totalSleepFormatted }}
-          </span>
-        </div>
-
-        <div class="p-3 rounded-2xl bg-subtle border border-borderSubtle text-center">
-          <span class="block text-[10px] font-semibold text-mutedText uppercase">Siestas</span>
-          <span class="text-lg font-extrabold text-primaryText font-mono mt-0.5 block">
-            {{ sleepStats.napCountToday }}
-          </span>
-        </div>
-
-        <div class="p-3 rounded-2xl bg-subtle border border-borderSubtle text-center">
-          <span class="block text-[10px] font-semibold text-mutedText uppercase">Media Siesta</span>
-          <span class="text-lg font-extrabold text-primaryText font-mono mt-0.5 block">
-            {{ sleepStats.avgNapMinutesToday }}<span class="text-xs font-normal text-mutedText ml-0.5">m</span>
-          </span>
-        </div>
-      </div>
-    </div>
-
     <!-- 3. Unified Chronological Activity History with Filter -->
-    <div class="pt-2 border-t border-borderSubtle">
-      <div class="flex items-center justify-between mb-3">
+    <div class="pt-2 border-t border-borderSubtle space-y-3">
+      <div class="flex items-center justify-between">
         <h3 class="text-xs font-bold uppercase tracking-wider text-mutedText flex items-center gap-1.5">
           <Calendar class="w-3.5 h-3.5" />
           <span>Historial de Actividad</span>
@@ -219,7 +485,7 @@ const combinedHistory = computed<UnifiedActivity[]>(() => {
       </div>
 
       <div v-if="combinedHistory.length === 0" class="py-6 text-center text-xs text-mutedText">
-        No hay actividades registradas con el filtro actual.
+        No hay actividades registradas en este periodo.
       </div>
 
       <div v-else class="space-y-2 max-h-80 overflow-y-auto pr-1">
@@ -276,3 +542,4 @@ const combinedHistory = computed<UnifiedActivity[]>(() => {
 
   </section>
 </template>
+

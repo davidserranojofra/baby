@@ -1,20 +1,26 @@
 <script setup lang="ts">
-import { computed } from 'vue';
-import { Play, Pause, X, Check, Moon, MessageSquare } from 'lucide-vue-next';
+import { ref, computed } from 'vue';
+import { Play, Pause, ChevronDown, Trash2, Check, Moon, MessageSquare, AlertCircle } from 'lucide-vue-next';
 import type { ActiveSleepSession } from '~/types/baby-tracker';
 
-const props = defineProps<{
+const props = withDefaults(defineProps<{
   session: ActiveSleepSession;
+  isOpen: boolean;
   isLoading?: boolean;
-}>();
+}>(), {
+  isOpen: false
+});
 
 const emit = defineEmits<{
+  (e: 'close'): void;
   (e: 'pause'): void;
   (e: 'resume'): void;
   (e: 'finish'): void;
   (e: 'cancel'): void;
   (e: 'update:notes', val: string): void;
 }>();
+
+const isConfirmingCancel = ref<boolean>(false);
 
 const formatDuration = (sec: number) => {
   const h = Math.floor(sec / 3600);
@@ -26,16 +32,27 @@ const formatDuration = (sec: number) => {
   }
   return `${pad(m)}:${pad(s)}`;
 };
+
+const handleBackdropClick = () => {
+  isConfirmingCancel.value = false;
+  emit('close');
+};
+
+const handleConfirmCancel = () => {
+  isConfirmingCancel.value = false;
+  emit('cancel');
+};
 </script>
 
 <template>
   <div 
-    v-if="session.isActive" 
+    v-if="isOpen && session.isActive" 
     class="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-0 sm:p-4 bg-black/60 backdrop-blur-sm transition-all"
+    @click.self="handleBackdropClick"
   >
     <div class="w-full max-w-md bg-surface rounded-t-3xl sm:rounded-3xl p-6 shadow-soft-lg border border-borderSubtle animate-in slide-in-from-bottom-6 duration-200">
       
-      <!-- Modal Header -->
+      <!-- Modal Header with Minimize & Discard Controls -->
       <div class="flex items-center justify-between pb-4 border-b border-borderSubtle">
         <div class="flex items-center gap-2">
           <span class="flex h-3 w-3 relative">
@@ -47,14 +64,58 @@ const formatDuration = (sec: number) => {
             <span>{{ session.isPaused ? 'Sueño en Pausa' : 'Bebé Durmiendo' }}</span>
           </h3>
         </div>
-        <button 
-          type="button" 
-          @click="emit('cancel')" 
-          class="p-1.5 text-mutedText hover:text-primaryText rounded-full hover:bg-subtle"
-          title="Descartar"
-        >
-          <X class="w-5 h-5" />
-        </button>
+
+        <div class="flex items-center gap-1">
+          <!-- Discard button -->
+          <button 
+            type="button" 
+            @click="isConfirmingCancel = !isConfirmingCancel" 
+            class="p-2 text-mutedText hover:text-rose-500 rounded-xl hover:bg-rose-500/10 transition-colors"
+            title="Descartar sesión"
+          >
+            <Trash2 class="w-4 h-4" />
+          </button>
+
+          <!-- Minimize button -->
+          <button 
+            type="button" 
+            @click="emit('close')" 
+            class="p-2 text-secondaryText hover:text-primaryText rounded-xl hover:bg-subtle transition-colors flex items-center gap-1 text-xs font-semibold"
+            title="Minimizar (sigue contando en segundo plano)"
+          >
+            <ChevronDown class="w-5 h-5" />
+          </button>
+        </div>
+      </div>
+
+      <!-- Discard Confirmation Banner -->
+      <div 
+        v-if="isConfirmingCancel" 
+        class="mt-3 p-3 bg-rose-500/10 border border-rose-500/20 rounded-2xl animate-in fade-in duration-150 space-y-2"
+      >
+        <div class="flex items-center gap-2 text-xs font-bold text-rose-500">
+          <AlertCircle class="w-4 h-4 flex-shrink-0" />
+          <span>¿Descartar este registro sin guardar?</span>
+        </div>
+        <p class="text-[11px] text-mutedText leading-relaxed">
+          Se perderá el tiempo transcurrido ({{ formatDuration(session.elapsedSeconds) }}). Si solo querés seguir usando la app, podés minimizarlo.
+        </p>
+        <div class="flex gap-2 pt-1">
+          <button 
+            type="button" 
+            @click="isConfirmingCancel = false"
+            class="flex-1 py-1.5 rounded-xl bg-subtle text-secondaryText text-xs font-bold hover:bg-borderSubtle transition-all"
+          >
+            Seguir registrando
+          </button>
+          <button 
+            type="button" 
+            @click="handleConfirmCancel"
+            class="flex-1 py-1.5 rounded-xl bg-rose-500 hover:bg-rose-600 text-white text-xs font-bold transition-all"
+          >
+            Sí, descartar
+          </button>
+        </div>
       </div>
 
       <!-- Live Duration Clock -->
@@ -64,7 +125,7 @@ const formatDuration = (sec: number) => {
           {{ formatDuration(session.elapsedSeconds) }}
         </div>
         <span class="text-xs text-mutedText mt-1 block">
-          {{ session.isPaused ? 'En pausa' : 'Cronómetro activo' }}
+          {{ session.isPaused ? 'En pausa' : 'Cronómetro activo en segundo plano' }}
         </span>
       </div>
 
@@ -117,6 +178,18 @@ const formatDuration = (sec: number) => {
         </button>
       </div>
 
+      <!-- Quick Hint -->
+      <div class="mt-3 text-center">
+        <button 
+          type="button" 
+          @click="emit('close')" 
+          class="text-[11px] text-mutedText hover:text-primaryText underline transition-colors"
+        >
+          Minimizar y seguir navegando la app
+        </button>
+      </div>
+
     </div>
   </div>
 </template>
+

@@ -125,6 +125,35 @@ export interface ActiveSleepSession {
   notes: string;
 }
 
+export type TimeframePeriod = 'day' | 'week' | 'month';
+
+export interface DaySleepMetric {
+  date: string; // YYYY-MM-DD
+  dayLabel: string; // "Lun 18", "Hoy", "23 Ago", etc.
+  dayShort: string; // "L", "M", "X", "J", "V", "S", "D"
+  totalSleepSeconds: number;
+  totalSleepFormatted: string;
+  totalHoursDecimal: number;
+  napCount: number;
+  isTargetDay?: boolean;
+}
+
+export interface PeriodSleepStatsSummary {
+  period: TimeframePeriod;
+  targetDate: string; // YYYY-MM-DD
+  periodLabel: string; // e.g. "Hoy, 23 Ago", "Semana: 17 Ago - 23 Ago", "Agosto 2026"
+  totalSleepSeconds: number;
+  totalSleepFormatted: string;
+  dailyAvgSleepFormatted: string;
+  dailyAvgHoursDecimal: number;
+  napCount: number;
+  dailyAvgNaps: number;
+  avgNapMinutes: number;
+  longestNapMinutes: number;
+  dailyBreakdown: DaySleepMetric[];
+  logs: SleepLog[];
+}
+
 export interface SleepStatsSummary {
   totalSleepSecondsToday: number;
   totalSleepFormatted: string;
@@ -132,4 +161,6 @@ export interface SleepStatsSummary {
   avgNapMinutesToday: number;
   longestNapMinutesToday: number;
   lastSleep?: SleepLog | null;
+  selectedDate?: string;
 }
+

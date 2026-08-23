@@ -6,6 +6,7 @@ import { useSleepTracker } from '~/composables/useSleepTracker';
 import { useMedicationTracker } from '~/composables/useMedicationTracker';
 import { useTheme } from '~/composables/useTheme';
 import { useAuth } from '~/composables/useAuth';
+import ActiveTimerBar from '~/components/ActiveTimerBar.vue';
 import type { TabType } from '~/components/BottomNav.vue';
 import type { CreateFeedingDTO, CreateSleepDTO, CreateMedicationDTO } from '~/types/baby-tracker';
 
@@ -32,10 +33,11 @@ const {
   switchBreastSide,
   pauseActiveSession: pauseFeedingSession,
   resumeActiveSession: resumeFeedingSession,
-  finishActiveSession: finishFeedingSession,
-  cancelActiveSession: cancelFeedingSession,
+  finishActiveSession: finishFeedingSessionRaw,
+  cancelActiveSession: cancelFeedingSessionRaw,
   createManualFeeding,
-  deleteFeeding
+  deleteFeeding,
+  restoreFromStorage: restoreFeedingFromStorage
 } = useFeedingTracker();
 
 const {
@@ -45,14 +47,23 @@ const {
   activeSession: activeSleepSession,
   lastSleepLog,
   sleepStats,
+  selectedDate: selectedSleepDate,
+  selectedPeriod: selectedSleepPeriod,
+  selectedDateSleepStats,
+  currentPeriodSleepStats,
   fetchSleepLogs,
   startSleepSession,
   pauseSleepSession,
   resumeSleepSession,
-  finishSleepSession,
-  cancelSleepSession,
+  finishSleepSession: finishSleepSessionRaw,
+  cancelSleepSession: cancelSleepSessionRaw,
   createManualSleep,
-  deleteSleep
+  deleteSleep,
+  restoreFromStorage: restoreSleepFromStorage,
+  setSelectedDate: setSleepSelectedDate,
+  setSelectedPeriod: setSleepSelectedPeriod,
+  navigateDate: navigateSleepDate,
+  goToToday: goSleepToday
 } = useSleepTracker();
 
 const {
@@ -68,6 +79,38 @@ const {
 // UI Modals state
 const isManualFeedingOpen = ref<boolean>(false);
 const isManualSleepOpen = ref<boolean>(false);
+const isFeedingTimerOpen = ref<boolean>(false);
+const isSleepTimerOpen = ref<boolean>(false);
+
+const handleStartBreast = (side: 'left' | 'right') => {
+  startBreastSession(side);
+  isFeedingTimerOpen.value = true;
+};
+
+const handleStartSleep = () => {
+  startSleepSession();
+  isSleepTimerOpen.value = true;
+};
+
+const handleFinishFeeding = async () => {
+  await finishFeedingSessionRaw();
+  isFeedingTimerOpen.value = false;
+};
+
+const handleCancelFeeding = () => {
+  cancelFeedingSessionRaw();
+  isFeedingTimerOpen.value = false;
+};
+
+const handleFinishSleep = async () => {
+  await finishSleepSessionRaw();
+  isSleepTimerOpen.value = false;
+};
+
+const handleCancelSleep = () => {
+  cancelSleepSessionRaw();
+  isSleepTimerOpen.value = false;
+};
 
 const hasOverdueMeds = computed(() => {
   return medications.value.some(m => m.is_overdue);
@@ -106,6 +149,8 @@ const confirmLogout = async () => {
 
 onMounted(() => {
   initTheme();
+  restoreFeedingFromStorage();
+  restoreSleepFromStorage();
   fetchFeedings();
   fetchSleepLogs();
   fetchMedications();
@@ -113,7 +158,7 @@ onMounted(() => {
 </script>
 
 <template>
-  <div class="min-h-screen bg-base text-primaryText transition-colors duration-200 pb-24">
+  <div class="min-h-screen bg-base text-primaryText transition-colors duration-200 pb-28 sm:pb-24">
     <!-- Top Mobile Navbar -->
     <header class="sticky top-0 z-40 bg-surface/80 backdrop-blur-md border-b border-borderSubtle px-4 py-3">
       <div class="max-w-md mx-auto flex items-center justify-between">
@@ -184,9 +229,15 @@ onMounted(() => {
       <div v-show="currentTab === 'feeding'" class="space-y-4 animate-in fade-in duration-150">
         <FeedingHero
           :last-feeding="lastFeeding"
+          :active-session="activeFeedingSession"
           :is-loading="isFeedingLoading"
-          @start-breast="startBreastSession"
+          @start-breast="handleStartBreast"
           @open-manual="isManualFeedingOpen = true"
+          @open-active-modal="isFeedingTimerOpen = true"
+          @switch-side="switchBreastSide"
+          @pause-feeding="pauseFeedingSession"
+          @resume-feeding="resumeFeedingSession"
+          @finish-feeding="handleFinishFeeding"
         />
 
         <!-- Mini Quick KPI Summary -->
@@ -210,23 +261,35 @@ onMounted(() => {
       <div v-show="currentTab === 'sleep'" class="space-y-4 animate-in fade-in duration-150">
         <SleepHero
           :last-sleep="lastSleepLog"
+          :active-session="activeSleepSession"
+          :selected-date="selectedSleepDate"
+          :date-stats="selectedDateSleepStats"
           :is-loading="isSleepLoading"
-          @start-sleep="startSleepSession"
+          @start-sleep="handleStartSleep"
           @open-manual="isManualSleepOpen = true"
+          @open-active-modal="isSleepTimerOpen = true"
+          @pause-sleep="pauseSleepSession"
+          @resume-sleep="resumeSleepSession"
+          @finish-sleep="handleFinishSleep"
+          @update:date="setSleepSelectedDate"
+          @navigate-date="navigateSleepDate"
+          @go-today="goSleepToday"
         />
 
         <!-- Mini Sleep KPI Summary -->
         <div class="grid grid-cols-2 gap-3">
           <div class="p-4 rounded-2xl bg-surface border border-borderSubtle shadow-soft-sm">
-            <span class="text-[11px] font-semibold text-mutedText block">Total Sueño Hoy</span>
+            <span class="text-[11px] font-semibold text-mutedText block">
+              {{ selectedSleepDate === new Date().toISOString().split('T')[0] ? 'Total Sueño Hoy' : 'Total Sueño Día' }}
+            </span>
             <span class="text-2xl font-black text-primaryText font-mono mt-0.5 block">
-              {{ sleepStats.totalSleepFormatted }}
+              {{ selectedDateSleepStats.totalSleepFormatted }}
             </span>
           </div>
           <div class="p-4 rounded-2xl bg-surface border border-borderSubtle shadow-soft-sm">
             <span class="text-[11px] font-semibold text-mutedText block">Siestas Registradas</span>
             <span class="text-2xl font-black text-primaryText font-mono mt-0.5 block">
-              {{ sleepStats.napCountToday }}
+              {{ selectedDateSleepStats.napCountToday }}
             </span>
           </div>
         </div>
@@ -250,13 +313,37 @@ onMounted(() => {
           :feedings="feedings"
           :sleep-stats="sleepStats"
           :sleep-logs="sleepLogs"
+          :selected-period="selectedSleepPeriod"
+          :selected-date="selectedSleepDate"
+          :period-sleep-stats="currentPeriodSleepStats"
           :is-loading="isFeedingLoading || isSleepLoading"
           @delete-feeding="deleteFeeding"
           @delete-sleep="deleteSleep"
+          @update:period="setSleepSelectedPeriod"
+          @update:date="setSleepSelectedDate"
+          @navigate-date="navigateSleepDate"
+          @go-today="goSleepToday"
         />
       </div>
 
     </main>
+
+    <!-- Floating Mini-Player Active Timer Bar (Visible across all tabs when any session is active) -->
+    <ActiveTimerBar
+      :sleep-session="activeSleepSession"
+      :feeding-session="activeFeedingSession"
+      :is-sleep-loading="isSleepLoading"
+      :is-feeding-loading="isFeedingLoading"
+      @expand-sleep="isSleepTimerOpen = true"
+      @expand-feeding="isFeedingTimerOpen = true"
+      @pause-sleep="pauseSleepSession"
+      @resume-sleep="resumeSleepSession"
+      @finish-sleep="handleFinishSleep"
+      @pause-feeding="pauseFeedingSession"
+      @resume-feeding="resumeFeedingSession"
+      @switch-feeding-side="switchBreastSide"
+      @finish-feeding="handleFinishFeeding"
+    />
 
     <!-- Bottom Navigation Bar -->
     <BottomNav
@@ -268,12 +355,14 @@ onMounted(() => {
     <!-- Active Live Breastfeeding Timer Modal -->
     <FeedingTimerModal
       :session="activeFeedingSession"
+      :is-open="isFeedingTimerOpen"
       :is-loading="isFeedingLoading"
+      @close="isFeedingTimerOpen = false"
       @switch-side="switchBreastSide"
       @pause="pauseFeedingSession"
       @resume="resumeFeedingSession"
-      @finish="finishFeedingSession"
-      @cancel="cancelFeedingSession"
+      @finish="handleFinishFeeding"
+      @cancel="handleCancelFeeding"
       @update:notes="val => activeFeedingSession.notes = val"
     />
 
@@ -288,11 +377,13 @@ onMounted(() => {
     <!-- Active Live Sleep Timer Modal -->
     <SleepTimerModal
       :session="activeSleepSession"
+      :is-open="isSleepTimerOpen"
       :is-loading="isSleepLoading"
+      @close="isSleepTimerOpen = false"
       @pause="pauseSleepSession"
       @resume="resumeSleepSession"
-      @finish="finishSleepSession"
-      @cancel="cancelSleepSession"
+      @finish="handleFinishSleep"
+      @cancel="handleCancelSleep"
       @update:notes="val => activeSleepSession.notes = val"
     />
 
@@ -343,3 +434,4 @@ onMounted(() => {
 
   </div>
 </template>
+
