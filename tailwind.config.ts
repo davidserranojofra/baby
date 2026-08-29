@@ -43,6 +43,11 @@ export default <Config>{
           soft: 'var(--meds-soft)',
           border: 'var(--meds-border)'
         },
+        weight: {
+          DEFAULT: 'var(--weight-accent)',
+          soft: 'var(--weight-soft)',
+          border: 'var(--weight-border)'
+        },
         warningSoft: {
           DEFAULT: 'var(--warning-accent)',
           soft: 'var(--warning-soft)',

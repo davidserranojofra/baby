@@ -1,7 +1,7 @@
 <script setup lang="ts">
-import { Baby, Moon, Pill, BarChart2 } from 'lucide-vue-next';
+import { Baby, Moon, Scale, Pill, BarChart2 } from 'lucide-vue-next';
 
-export type TabType = 'feeding' | 'sleep' | 'meds' | 'stats';
+export type TabType = 'feeding' | 'sleep' | 'weight' | 'meds' | 'stats';
 
 defineProps<{
   currentTab: TabType;
@@ -15,7 +15,7 @@ const emit = defineEmits<{
 
 <template>
   <nav class="fixed bottom-0 inset-x-0 z-40 bg-surface/90 backdrop-blur-xl border-t border-borderSubtle safe-area-bottom">
-    <div class="max-w-md mx-auto px-2 h-16 flex items-center justify-around">
+    <div class="max-w-md mx-auto px-1 sm:px-2 h-16 flex items-center justify-around">
       
       <!-- Tab 1: Lactancia / Feeding -->
       <button
@@ -49,7 +49,23 @@ const emit = defineEmits<{
         <span class="text-[10px] sm:text-[11px] leading-none">Sueño</span>
       </button>
 
-      <!-- Tab 3: Medicamentos / Meds -->
+      <!-- Tab 3: Peso / Weight -->
+      <button
+        type="button"
+        @click="emit('update:tab', 'weight')"
+        class="flex-1 py-1.5 flex flex-col items-center justify-center gap-1 transition-all active:scale-95 relative"
+        :class="currentTab === 'weight' ? 'text-weight font-bold' : 'text-mutedText hover:text-secondaryText font-medium'"
+      >
+        <div 
+          class="p-1 rounded-xl transition-all"
+          :class="currentTab === 'weight' ? 'bg-weight-soft' : ''"
+        >
+          <Scale class="w-5 h-5" />
+        </div>
+        <span class="text-[10px] sm:text-[11px] leading-none">Peso</span>
+      </button>
+
+      <!-- Tab 4: Medicamentos / Meds -->
       <button
         type="button"
         @click="emit('update:tab', 'meds')"
@@ -70,7 +86,7 @@ const emit = defineEmits<{
         <span class="text-[10px] sm:text-[11px] leading-none">Medicación</span>
       </button>
 
-      <!-- Tab 4: Estadísticas / Stats -->
+      <!-- Tab 5: Estadísticas / Stats -->
       <button
         type="button"
         @click="emit('update:tab', 'stats')"
@@ -89,3 +105,4 @@ const emit = defineEmits<{
     </div>
   </nav>
 </template>
+

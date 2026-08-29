@@ -24,7 +24,8 @@ const durationLeftMinutes = ref<number>(15);
 const durationRightMinutes = ref<number>(15);
 const amountMaternalMl = ref<number>(60);
 const amountFormulaMl = ref<number>(90);
-const bottleDurationMinutes = ref<number>(10);
+const durationMaternalMinutes = ref<number>(10);
+const durationFormulaMinutes = ref<number>(10);
 
 const startedAtLocal = ref<string>('');
 const notes = ref<string>('');
@@ -52,7 +53,8 @@ watch(() => props.isOpen, (newVal) => {
     durationRightMinutes.value = 15;
     amountMaternalMl.value = 60;
     amountFormulaMl.value = 90;
-    bottleDurationMinutes.value = 10;
+    durationMaternalMinutes.value = 10;
+    durationFormulaMinutes.value = 10;
     notes.value = '';
     formError.value = null;
   }
@@ -72,7 +74,8 @@ const handleSubmit = () => {
   const startDate = new Date(startedAtLocal.value);
   let leftSec = 0;
   let rightSec = 0;
-  let bottleSec = 0;
+  let maternalBottleSec = 0;
+  let formulaBottleSec = 0;
 
   if (useLeftBreast.value) {
     leftSec = (durationLeftMinutes.value || 0) * 60;
@@ -80,11 +83,15 @@ const handleSubmit = () => {
   if (useRightBreast.value) {
     rightSec = (durationRightMinutes.value || 0) * 60;
   }
-  if (useMaternalBottle.value || useFormulaBottle.value) {
-    bottleSec = (bottleDurationMinutes.value || 0) * 60;
+  if (useMaternalBottle.value) {
+    maternalBottleSec = (durationMaternalMinutes.value || 0) * 60;
+  }
+  if (useFormulaBottle.value) {
+    formulaBottleSec = (durationFormulaMinutes.value || 0) * 60;
   }
 
-  const totalDurationSec = leftSec + rightSec + (leftSec === 0 && rightSec === 0 ? bottleSec : 0);
+  const bottleSec = maternalBottleSec + formulaBottleSec;
+  const totalDurationSec = leftSec + rightSec + bottleSec;
   const endDate = new Date(startDate.getTime() + (totalDurationSec || 600) * 1000);
 
   const matMl = useMaternalBottle.value ? (amountMaternalMl.value || 0) : 0;
@@ -246,16 +253,28 @@ const handleSubmit = () => {
                 />
               </div>
               <div v-if="useMaternalBottle" class="mt-1" @click.stop>
-                <div class="flex items-center gap-1 bg-surface p-1.5 rounded-xl border border-borderSubtle">
-                  <input
-                    type="number"
-                    v-model.number="amountMaternalMl"
-                    min="5"
-                    max="500"
-                    step="5"
-                    class="w-full text-center text-xs font-mono font-bold bg-transparent focus:outline-none"
-                  />
-                  <span class="text-[10px] text-mutedText pr-1">ml</span>
+                <div class="grid grid-cols-2 gap-1.5">
+                  <div class="flex items-center gap-1 bg-surface p-1.5 rounded-xl border border-borderSubtle">
+                    <input
+                      type="number"
+                      v-model.number="amountMaternalMl"
+                      min="5"
+                      max="500"
+                      step="5"
+                      class="w-full text-center text-xs font-mono font-bold bg-transparent focus:outline-none"
+                    />
+                    <span class="text-[10px] text-mutedText pr-0.5">ml</span>
+                  </div>
+                  <div class="flex items-center gap-1 bg-surface p-1.5 rounded-xl border border-borderSubtle">
+                    <input
+                      type="number"
+                      v-model.number="durationMaternalMinutes"
+                      min="1"
+                      max="120"
+                      class="w-full text-center text-xs font-mono font-bold bg-transparent focus:outline-none"
+                    />
+                    <span class="text-[10px] text-mutedText pr-0.5">min</span>
+                  </div>
                 </div>
               </div>
             </div>
@@ -279,16 +298,28 @@ const handleSubmit = () => {
                 />
               </div>
               <div v-if="useFormulaBottle" class="mt-1" @click.stop>
-                <div class="flex items-center gap-1 bg-surface p-1.5 rounded-xl border border-borderSubtle">
-                  <input
-                    type="number"
-                    v-model.number="amountFormulaMl"
-                    min="5"
-                    max="500"
-                    step="5"
-                    class="w-full text-center text-xs font-mono font-bold bg-transparent focus:outline-none"
-                  />
-                  <span class="text-[10px] text-mutedText pr-1">ml</span>
+                <div class="grid grid-cols-2 gap-1.5">
+                  <div class="flex items-center gap-1 bg-surface p-1.5 rounded-xl border border-borderSubtle">
+                    <input
+                      type="number"
+                      v-model.number="amountFormulaMl"
+                      min="5"
+                      max="500"
+                      step="5"
+                      class="w-full text-center text-xs font-mono font-bold bg-transparent focus:outline-none"
+                    />
+                    <span class="text-[10px] text-mutedText pr-0.5">ml</span>
+                  </div>
+                  <div class="flex items-center gap-1 bg-surface p-1.5 rounded-xl border border-borderSubtle">
+                    <input
+                      type="number"
+                      v-model.number="durationFormulaMinutes"
+                      min="1"
+                      max="120"
+                      class="w-full text-center text-xs font-mono font-bold bg-transparent focus:outline-none"
+                    />
+                    <span class="text-[10px] text-mutedText pr-0.5">min</span>
+                  </div>
                 </div>
               </div>
             </div>

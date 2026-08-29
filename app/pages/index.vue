@@ -1,14 +1,17 @@
 <script setup lang="ts">
 import { ref, computed, onMounted } from 'vue';
-import { Moon, Sun, Baby, AlertTriangle, LogOut, User as UserIcon, Loader2 } from 'lucide-vue-next';
+import { Moon, Sun, Baby, Scale, Pill, BarChart2, AlertTriangle, LogOut, User as UserIcon, Loader2 } from 'lucide-vue-next';
 import { useFeedingTracker } from '~/composables/useFeedingTracker';
 import { useSleepTracker } from '~/composables/useSleepTracker';
 import { useMedicationTracker } from '~/composables/useMedicationTracker';
+import { useWeightTracker } from '~/composables/useWeightTracker';
 import { useTheme } from '~/composables/useTheme';
 import { useAuth } from '~/composables/useAuth';
 import ActiveTimerBar from '~/components/ActiveTimerBar.vue';
+import WeightHero from '~/components/WeightHero.vue';
+import WeightModal from '~/components/WeightModal.vue';
 import type { TabType } from '~/components/BottomNav.vue';
-import type { CreateFeedingDTO, CreateSleepDTO, CreateMedicationDTO } from '~/types/baby-tracker';
+import type { CreateFeedingDTO, CreateSleepDTO, CreateMedicationDTO, CreateWeightDTO, UpdateWeightDTO, WeightLog } from '~/types/baby-tracker';
 
 // Navigation tab state
 const currentTab = ref<TabType>('feeding');
@@ -79,11 +82,54 @@ const {
   deleteMedication
 } = useMedicationTracker();
 
+const {
+  weights,
+  isLoading: isWeightLoading,
+  error: weightError,
+  stats: weightStats,
+  fetchWeights,
+  createWeight,
+  updateWeight,
+  deleteWeight,
+  getChartPoints
+} = useWeightTracker();
+
 // UI Modals state
 const isManualFeedingOpen = ref<boolean>(false);
 const isManualSleepOpen = ref<boolean>(false);
 const isFeedingTimerOpen = ref<boolean>(false);
 const isSleepTimerOpen = ref<boolean>(false);
+const isWeightModalOpen = ref<boolean>(false);
+const weightToEdit = ref<WeightLog | null>(null);
+
+const handleOpenCreateWeight = () => {
+  weightToEdit.value = null;
+  isWeightModalOpen.value = true;
+};
+
+const handleOpenEditWeight = (weight: WeightLog) => {
+  weightToEdit.value = weight;
+  isWeightModalOpen.value = true;
+};
+
+const handleCreateWeight = async (dto: CreateWeightDTO) => {
+  try {
+    await createWeight(dto);
+    isWeightModalOpen.value = false;
+  } catch (e) {
+    // Handled in composable
+  }
+};
+
+const handleUpdateWeight = async (dto: UpdateWeightDTO) => {
+  try {
+    await updateWeight(dto);
+    isWeightModalOpen.value = false;
+    weightToEdit.value = null;
+  } catch (e) {
+    // Handled in composable
+  }
+};
 
 const handleStartBreast = (side: 'left' | 'right') => {
   startBreastSession(side);
@@ -162,6 +208,7 @@ onMounted(() => {
   fetchFeedings();
   fetchSleepLogs();
   fetchMedications();
+  fetchWeights();
 });
 </script>
 
@@ -176,13 +223,16 @@ onMounted(() => {
             :class="{
               'bg-breastLeft-soft border-breastLeft-border text-breastLeft': currentTab === 'feeding',
               'bg-bottle-soft border-bottle-border text-bottle': currentTab === 'sleep',
+              'bg-weight-soft border-weight-border text-weight': currentTab === 'weight',
               'bg-meds-soft border-meds-border text-meds': currentTab === 'meds',
               'bg-subtle border-borderSubtle text-primaryText': currentTab === 'stats'
             }"
           >
             <Baby v-if="currentTab === 'feeding'" class="w-5 h-5" />
             <Moon v-else-if="currentTab === 'sleep'" class="w-5 h-5" />
-            <Baby v-else class="w-5 h-5" />
+            <Scale v-else-if="currentTab === 'weight'" class="w-5 h-5" />
+            <Pill v-else-if="currentTab === 'meds'" class="w-5 h-5" />
+            <BarChart2 v-else class="w-5 h-5" />
           </div>
           <div>
             <h1 class="text-base font-extrabold tracking-tight text-primaryText leading-none">Baby Tracker</h1>
@@ -221,14 +271,14 @@ onMounted(() => {
       
       <!-- Global Error / Notice Banner -->
       <div 
-        v-if="feedingError || sleepError || medError" 
+        v-if="feedingError || sleepError || weightError || medError" 
         class="p-3.5 rounded-2xl bg-warningSoft-soft border border-warningSoft-border text-xs text-primaryText flex items-start gap-2.5"
       >
         <AlertTriangle class="w-4 h-4 text-warningSoft flex-shrink-0 mt-0.5" />
         <div class="flex-1">
           <p class="font-bold">Aviso de conexión</p>
           <p class="text-secondaryText text-[11px] mt-0.5">
-            {{ feedingError || sleepError || medError }}
+            {{ feedingError || sleepError || weightError || medError }}
           </p>
         </div>
       </div>
@@ -305,7 +355,20 @@ onMounted(() => {
         </div>
       </div>
 
-      <!-- Tab 3: Medicación / Meds View -->
+      <!-- Tab 3: Peso / Weight View -->
+      <div v-show="currentTab === 'weight'" class="space-y-4 animate-in fade-in duration-150">
+        <WeightHero
+          :weights="weights"
+          :stats="weightStats"
+          :get-chart-points="getChartPoints"
+          :is-loading="isWeightLoading"
+          @open-create="handleOpenCreateWeight"
+          @open-edit="handleOpenEditWeight"
+          @delete-weight="deleteWeight"
+        />
+      </div>
+
+      <!-- Tab 4: Medicación / Meds View -->
       <div v-show="currentTab === 'meds'" class="animate-in fade-in duration-150">
         <MedicationCard
           :medications="medications"
@@ -316,7 +379,7 @@ onMounted(() => {
         />
       </div>
 
-      <!-- Tab 4: Estadísticas / Stats View -->
+      <!-- Tab 5: Estadísticas / Stats View -->
       <div v-show="currentTab === 'stats'" class="animate-in fade-in duration-150">
         <FeedingStats
           :stats="feedingStats"
@@ -361,6 +424,16 @@ onMounted(() => {
       :current-tab="currentTab"
       :has-overdue-meds="hasOverdueMeds"
       @update:tab="tab => currentTab = tab"
+    />
+
+    <!-- Weight Create / Edit Modal -->
+    <WeightModal
+      :is-open="isWeightModalOpen"
+      :is-loading="isWeightLoading"
+      :weight-to-edit="weightToEdit"
+      @close="isWeightModalOpen = false"
+      @submit-create="handleCreateWeight"
+      @submit-update="handleUpdateWeight"
     />
 
     <!-- Active Live Breastfeeding Timer Modal -->

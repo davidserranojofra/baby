@@ -189,3 +189,54 @@ export interface SleepStatsSummary {
   selectedDate?: string;
 }
 
+// ------------------------------------------------------------------------------
+// WEIGHT DOMAIN TYPES
+// ------------------------------------------------------------------------------
+
+export interface WeightLog {
+  id: string;
+  user_id?: string | null;
+  weight_kg: number;
+  recorded_at: string; // ISO 8601 string
+  notes?: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface CreateWeightDTO {
+  weight_kg: number;
+  recorded_at: string;
+  notes?: string | null;
+}
+
+export interface UpdateWeightDTO {
+  id: string;
+  weight_kg: number;
+  recorded_at: string;
+  notes?: string | null;
+}
+
+export type WeightTimeframePeriod = 'week' | 'month' | 'year' | 'all';
+
+export interface WeightChartPoint {
+  id: string;
+  dateKey: string; // YYYY-MM-DD
+  dateLabel: string; // "18 Ago", "Hoy", etc.
+  fullDateLabel: string; // "18 de agosto de 2026, 10:30"
+  weightKg: number;
+  weightGrams: number;
+  diffFromPrevGrams: number | null;
+  notes?: string | null;
+  rawLog: WeightLog;
+}
+
+export interface WeightStatsSummary {
+  latestWeightKg: number | null;
+  latestWeightGrams: number | null;
+  latestRecordedAt: string | null;
+  diffRecentGrams: number | null; // diff compared to previous weigh-in
+  diffTotalGrams: number | null;  // diff compared to first recorded weigh-in
+  firstWeightKg: number | null;
+  totalLogsCount: number;
+}
+

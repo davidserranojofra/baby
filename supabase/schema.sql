@@ -99,7 +99,22 @@ CREATE TABLE IF NOT EXISTS public.sleep_logs (
     CONSTRAINT chk_sleep_chronological_times CHECK (ended_at >= started_at)
 );
 
--- 7. PERFORMANCE & SECURITY INDEXES
+-- 7. TABLE: WEIGHT_LOGS (Controles de Peso)
+CREATE TABLE IF NOT EXISTS public.weight_logs (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    user_id UUID REFERENCES auth.users(id) ON DELETE CASCADE DEFAULT auth.uid(),
+    
+    weight_kg NUMERIC(5, 3) NOT NULL,
+    recorded_at TIMESTAMPTZ NOT NULL DEFAULT timezone('utc'::text, now()),
+    notes TEXT NULL,
+    
+    created_at TIMESTAMPTZ NOT NULL DEFAULT timezone('utc'::text, now()),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT timezone('utc'::text, now()),
+
+    CONSTRAINT chk_weight_positive CHECK (weight_kg > 0 AND weight_kg < 100)
+);
+
+-- 8. PERFORMANCE & SECURITY INDEXES
 CREATE INDEX IF NOT EXISTS idx_feedings_user_started ON public.feedings (user_id, started_at DESC);
 CREATE INDEX IF NOT EXISTS idx_feedings_started_at ON public.feedings (started_at DESC);
 CREATE INDEX IF NOT EXISTS idx_medications_user_active ON public.medications (user_id, is_active);
@@ -107,12 +122,15 @@ CREATE INDEX IF NOT EXISTS idx_med_logs_user_administered ON public.medication_l
 CREATE INDEX IF NOT EXISTS idx_med_logs_med_id ON public.medication_logs (medication_id, administered_at DESC);
 CREATE INDEX IF NOT EXISTS idx_sleep_user_started ON public.sleep_logs (user_id, started_at DESC);
 CREATE INDEX IF NOT EXISTS idx_sleep_started_at ON public.sleep_logs (started_at DESC);
+CREATE INDEX IF NOT EXISTS idx_weight_logs_user_recorded ON public.weight_logs (user_id, recorded_at DESC);
+CREATE INDEX IF NOT EXISTS idx_weight_logs_recorded_at ON public.weight_logs (recorded_at DESC);
 
--- 8. ROW LEVEL SECURITY (RLS) POLICIES
+-- 9. ROW LEVEL SECURITY (RLS) POLICIES
 ALTER TABLE public.feedings ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.medications ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.medication_logs ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.sleep_logs ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.weight_logs ENABLE ROW LEVEL SECURITY;
 
 -- Strict Multi-tenant User Isolation Policies (OWASP A01)
 CREATE POLICY "Feedings user isolation policy" ON public.feedings
@@ -134,6 +152,12 @@ CREATE POLICY "Medication logs user isolation policy" ON public.medication_logs
     WITH CHECK (auth.uid() IS NOT NULL AND user_id = auth.uid());
 
 CREATE POLICY "Sleep user isolation policy" ON public.sleep_logs
+    FOR ALL
+    TO authenticated
+    USING (auth.uid() IS NOT NULL AND user_id = auth.uid())
+    WITH CHECK (auth.uid() IS NOT NULL AND user_id = auth.uid());
+
+CREATE POLICY "Weight logs user isolation policy" ON public.weight_logs
     FOR ALL
     TO authenticated
     USING (auth.uid() IS NOT NULL AND user_id = auth.uid())
