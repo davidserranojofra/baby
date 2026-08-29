@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, computed } from 'vue';
+import { ref, computed, onMounted, onUnmounted } from 'vue';
 import { 
   Scale, 
   Plus, 
@@ -13,7 +13,11 @@ import {
   Sparkles, 
   Clock, 
   Award,
-  AlertCircle
+  AlertCircle,
+  Maximize2,
+  Minimize2,
+  RotateCw,
+  X
 } from 'lucide-vue-next';
 import type { 
   WeightLog, 
@@ -38,6 +42,81 @@ const emit = defineEmits<{
 const activePeriod = ref<WeightTimeframePeriod>('all');
 const activeHoveredPointIndex = ref<number | null>(null);
 const weightToDelete = ref<WeightLog | null>(null);
+
+// Fullscreen state
+const isFullscreen = ref<boolean>(false);
+const isRotatedLandscape = ref<boolean>(false);
+
+const openFullscreen = async () => {
+  isFullscreen.value = true;
+  activeHoveredPointIndex.value = null;
+
+  if (typeof window !== 'undefined') {
+    // Check if mobile or tablet in portrait
+    const isPortrait = window.innerHeight > window.innerWidth;
+    const isMobileOrTablet = window.innerWidth <= 1024;
+    isRotatedLandscape.value = isPortrait && isMobileOrTablet;
+
+    try {
+      if (document.documentElement.requestFullscreen) {
+        await document.documentElement.requestFullscreen();
+      }
+      if ('orientation' in screen && (screen.orientation as any).lock) {
+        await (screen.orientation as any).lock('landscape').catch(() => {});
+      }
+    } catch (e) {
+      // Non-blocking browser fallback
+    }
+  }
+};
+
+const closeFullscreen = async () => {
+  isFullscreen.value = false;
+  isRotatedLandscape.value = false;
+  activeHoveredPointIndex.value = null;
+
+  if (typeof window !== 'undefined') {
+    try {
+      if ('orientation' in screen && (screen.orientation as any).unlock) {
+        (screen.orientation as any).unlock();
+      }
+      if (document.fullscreenElement && document.exitFullscreen) {
+        await document.exitFullscreen();
+      }
+    } catch (e) {
+      // Non-blocking
+    }
+  }
+};
+
+const toggleRotation = () => {
+  isRotatedLandscape.value = !isRotatedLandscape.value;
+};
+
+// Handle Escape key and orientation change
+onMounted(() => {
+  const handleKeydown = (e: KeyboardEvent) => {
+    if (e.key === 'Escape' && isFullscreen.value) {
+      closeFullscreen();
+    }
+  };
+
+  const handleOrientationChange = () => {
+    if (isFullscreen.value && typeof window !== 'undefined') {
+      const isPortrait = window.innerHeight > window.innerWidth;
+      const isMobileOrTablet = window.innerWidth <= 1024;
+      isRotatedLandscape.value = isPortrait && isMobileOrTablet;
+    }
+  };
+
+  window.addEventListener('keydown', handleKeydown);
+  window.addEventListener('resize', handleOrientationChange);
+
+  onUnmounted(() => {
+    window.removeEventListener('keydown', handleKeydown);
+    window.removeEventListener('resize', handleOrientationChange);
+  });
+});
 
 // Get deduplicated points for the selected timeframe
 const chartPoints = computed<WeightChartPoint[]>(() => {
@@ -70,7 +149,7 @@ const formatTime = (isoStr: string) => {
 };
 
 // ------------------------------------------------------------------------------
-// SVG CHART COMPUTATION & GEOMETRY
+// SVG CHART COMPUTATION & GEOMETRY (Standard Card View)
 // ------------------------------------------------------------------------------
 const svgWidth = 500;
 const svgHeight = 220;
@@ -114,7 +193,7 @@ const yGridLines = computed(() => {
   ];
 });
 
-// Coordinates for each point on the chart
+// Coordinates for each point on the standard chart
 const computedSvgPoints = computed(() => {
   const pts = chartPoints.value;
   if (pts.length === 0) return [];
@@ -149,14 +228,13 @@ const svgPathD = computed(() => {
     const curr = pts[i];
     const next = pts[i + 1];
     const midX = (curr.x + next.x) / 2;
-    // Cubic bezier curve with control points
     d += ` C ${midX} ${curr.y}, ${midX} ${next.y}, ${next.x} ${next.y}`;
   }
 
   return d;
 });
 
-// SVG Area Gradient Path (closes down to baseline)
+// SVG Area Gradient Path
 const svgAreaD = computed(() => {
   const lineD = svgPathD.value;
   const pts = computedSvgPoints.value;
@@ -169,9 +247,90 @@ const svgAreaD = computed(() => {
   return `${lineD} L ${last.x} ${baselineY} L ${first.x} ${baselineY} Z`;
 });
 
+// ------------------------------------------------------------------------------
+// SVG CHART COMPUTATION & GEOMETRY (Fullscreen Immersive View)
+// ------------------------------------------------------------------------------
+const fsSvgWidth = 900;
+const fsSvgHeight = 380;
+const fsPadLeft = 55;
+const fsPadRight = 35;
+const fsPadTop = 35;
+const fsPadBottom = 45;
+
+const fsPlotWidth = fsSvgWidth - fsPadLeft - fsPadRight;
+const fsPlotHeight = fsSvgHeight - fsPadTop - fsPadBottom;
+
+const fsYGridLines = computed(() => {
+  const { min, max } = chartBounds.value;
+  const step = (max - min) / 4;
+  return [
+    { value: max.toFixed(2), y: fsPadTop },
+    { value: (max - step).toFixed(2), y: fsPadTop + fsPlotHeight * 0.25 },
+    { value: (min + (max - min) / 2).toFixed(2), y: fsPadTop + fsPlotHeight * 0.5 },
+    { value: (min + step).toFixed(2), y: fsPadTop + fsPlotHeight * 0.75 },
+    { value: min.toFixed(2), y: fsPadTop + fsPlotHeight }
+  ];
+});
+
+const fsComputedSvgPoints = computed(() => {
+  const pts = chartPoints.value;
+  if (pts.length === 0) return [];
+
+  const { min, range } = chartBounds.value;
+
+  return pts.map((pt, i) => {
+    const x = pts.length === 1 
+      ? fsPadLeft + fsPlotWidth / 2 
+      : fsPadLeft + (i / (pts.length - 1)) * fsPlotWidth;
+
+    const normalizedY = range > 0 ? (pt.weightKg - min) / range : 0.5;
+    const y = fsPadTop + (1 - normalizedY) * fsPlotHeight;
+
+    return {
+      ...pt,
+      x,
+      y
+    };
+  });
+});
+
+const fsSvgPathD = computed(() => {
+  const pts = fsComputedSvgPoints.value;
+  if (pts.length === 0) return '';
+  if (pts.length === 1) return '';
+
+  let d = `M ${pts[0].x} ${pts[0].y}`;
+
+  for (let i = 0; i < pts.length - 1; i++) {
+    const curr = pts[i];
+    const next = pts[i + 1];
+    const midX = (curr.x + next.x) / 2;
+    d += ` C ${midX} ${curr.y}, ${midX} ${next.y}, ${next.x} ${next.y}`;
+  }
+
+  return d;
+});
+
+const fsSvgAreaD = computed(() => {
+  const lineD = fsSvgPathD.value;
+  const pts = fsComputedSvgPoints.value;
+  if (!lineD || pts.length < 2) return '';
+
+  const last = pts[pts.length - 1];
+  const first = pts[0];
+  const baselineY = fsPadTop + fsPlotHeight;
+
+  return `${lineD} L ${last.x} ${baselineY} L ${first.x} ${baselineY} Z`;
+});
+
 const hoveredPoint = computed(() => {
   if (activeHoveredPointIndex.value === null) return null;
   return computedSvgPoints.value[activeHoveredPointIndex.value] || null;
+});
+
+const fsHoveredPoint = computed(() => {
+  if (activeHoveredPointIndex.value === null) return null;
+  return fsComputedSvgPoints.value[activeHoveredPointIndex.value] || null;
 });
 
 const confirmDelete = () => {
@@ -292,55 +451,79 @@ const confirmDelete = () => {
     <!-- 2. Interactive Growth Chart (Curva de Crecimiento) -->
     <section class="w-full bg-surface rounded-3xl p-5 shadow-soft-md border border-borderSubtle transition-all space-y-4">
       
-      <!-- Chart Header with Period Selector Tabs -->
+      <!-- Chart Header with Period Selector Tabs & Fullscreen Trigger -->
       <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-2.5">
-        <div class="flex items-center gap-2">
-          <div class="w-7 h-7 rounded-lg bg-weight-soft flex items-center justify-center text-weight">
-            <TrendingUp class="w-4 h-4" />
+        <div class="flex items-center justify-between w-full sm:w-auto">
+          <div class="flex items-center gap-2">
+            <div class="w-7 h-7 rounded-lg bg-weight-soft flex items-center justify-center text-weight">
+              <TrendingUp class="w-4 h-4" />
+            </div>
+            <div>
+              <h3 class="text-xs font-extrabold uppercase tracking-wider text-primaryText">
+                Curva de Crecimiento
+              </h3>
+              <span class="text-[10px] text-mutedText">
+                (Último registro de cada día)
+              </span>
+            </div>
           </div>
-          <div>
-            <h3 class="text-xs font-extrabold uppercase tracking-wider text-primaryText">
-              Curva de Crecimiento
-            </h3>
-            <span class="text-[10px] text-mutedText">
-              (Último registro de cada día)
-            </span>
-          </div>
+
+          <!-- Mobile Quick Fullscreen Button -->
+          <button
+            type="button"
+            @click="openFullscreen"
+            class="sm:hidden p-2 rounded-xl bg-subtle hover:bg-borderSubtle text-secondaryText hover:text-primaryText border border-borderSubtle active:scale-95 transition-all"
+            title="Ver a pantalla completa"
+          >
+            <Maximize2 class="w-4 h-4 text-weight" />
+          </button>
         </div>
 
-        <!-- Period tabs: Semana, Mes, Año, Todo -->
-        <div class="flex items-center bg-subtle p-1 rounded-2xl border border-borderSubtle text-xs font-bold self-start sm:self-auto">
+        <div class="flex items-center gap-2 self-start sm:self-auto w-full sm:w-auto justify-between sm:justify-end">
+          <!-- Period tabs: Semana, Mes, Año, Todo -->
+          <div class="flex items-center bg-subtle p-1 rounded-2xl border border-borderSubtle text-xs font-bold">
+            <button
+              type="button"
+              @click="activePeriod = 'week'"
+              class="px-2.5 py-1 rounded-xl transition-all"
+              :class="activePeriod === 'week' ? 'bg-surface text-primaryText shadow-soft-xs font-black' : 'text-mutedText hover:text-secondaryText'"
+            >
+              Semana
+            </button>
+            <button
+              type="button"
+              @click="activePeriod = 'month'"
+              class="px-2.5 py-1 rounded-xl transition-all"
+              :class="activePeriod === 'month' ? 'bg-surface text-primaryText shadow-soft-xs font-black' : 'text-mutedText hover:text-secondaryText'"
+            >
+              Mes
+            </button>
+            <button
+              type="button"
+              @click="activePeriod = 'year'"
+              class="px-2.5 py-1 rounded-xl transition-all"
+              :class="activePeriod === 'year' ? 'bg-surface text-primaryText shadow-soft-xs font-black' : 'text-mutedText hover:text-secondaryText'"
+            >
+              Año
+            </button>
+            <button
+              type="button"
+              @click="activePeriod = 'all'"
+              class="px-2.5 py-1 rounded-xl transition-all"
+              :class="activePeriod === 'all' ? 'bg-surface text-primaryText shadow-soft-xs font-black' : 'text-mutedText hover:text-secondaryText'"
+            >
+              Todos
+            </button>
+          </div>
+
+          <!-- Desktop Fullscreen Icon Button -->
           <button
             type="button"
-            @click="activePeriod = 'week'"
-            class="px-2.5 py-1 rounded-xl transition-all"
-            :class="activePeriod === 'week' ? 'bg-surface text-primaryText shadow-soft-xs font-black' : 'text-mutedText hover:text-secondaryText'"
+            @click="openFullscreen"
+            class="hidden sm:inline-flex p-2 rounded-xl bg-subtle hover:bg-borderSubtle text-secondaryText hover:text-primaryText border border-borderSubtle active:scale-95 transition-all"
+            title="Ver a pantalla completa"
           >
-            Semana
-          </button>
-          <button
-            type="button"
-            @click="activePeriod = 'month'"
-            class="px-2.5 py-1 rounded-xl transition-all"
-            :class="activePeriod === 'month' ? 'bg-surface text-primaryText shadow-soft-xs font-black' : 'text-mutedText hover:text-secondaryText'"
-          >
-            Mes
-          </button>
-          <button
-            type="button"
-            @click="activePeriod = 'year'"
-            class="px-2.5 py-1 rounded-xl transition-all"
-            :class="activePeriod === 'year' ? 'bg-surface text-primaryText shadow-soft-xs font-black' : 'text-mutedText hover:text-secondaryText'"
-          >
-            Año
-          </button>
-          <button
-            type="button"
-            @click="activePeriod = 'all'"
-            class="px-2.5 py-1 rounded-xl transition-all"
-            :class="activePeriod === 'all' ? 'bg-surface text-primaryText shadow-soft-xs font-black' : 'text-mutedText hover:text-secondaryText'"
-          >
-            Todos
+            <Maximize2 class="w-4 h-4 text-weight" />
           </button>
         </div>
       </div>
@@ -547,8 +730,16 @@ const confirmDelete = () => {
             </div>
           </div>
 
-          <div v-else class="text-[10px] text-center text-mutedText pt-1">
-            Toca cualquier punto del gráfico para ver los detalles y ganancia
+          <div v-else class="flex items-center justify-between text-[10px] text-mutedText pt-1 px-1">
+            <span>Toca cualquier punto del gráfico para ver detalles</span>
+            <button 
+              type="button" 
+              @click="openFullscreen"
+              class="text-weight font-bold hover:underline flex items-center gap-1"
+            >
+              <Maximize2 class="w-3 h-3" />
+              <span>Expandir</span>
+            </button>
           </div>
 
         </div>
@@ -680,6 +871,292 @@ const confirmDelete = () => {
       </div>
 
     </section>
+
+    <!-- 4. FULLSCREEN IMMERSIVE GROWTH CHART OVERLAY (Horizontal in Mobile/Tablet, Fullscreen in Desktop) -->
+    <div
+      v-if="isFullscreen"
+      class="fixed inset-0 z-50 bg-base/98 backdrop-blur-xl flex items-center justify-center overflow-hidden animate-in fade-in duration-200"
+    >
+      <!-- Container: Rotated 90deg if on portrait mobile/tablet, otherwise normal full view -->
+      <div 
+        class="flex flex-col justify-between bg-surface border border-borderSubtle p-4 sm:p-6 shadow-2xl transition-all duration-300"
+        :class="isRotatedLandscape 
+          ? 'w-[100vh] h-[100vw] rotate-90 origin-center rounded-none' 
+          : 'w-full h-full sm:rounded-3xl sm:m-4 sm:max-w-6xl sm:max-h-[92vh]'"
+      >
+        
+        <!-- Fullscreen Top Bar -->
+        <div class="flex items-center justify-between gap-2 pb-3 border-b border-borderSubtle flex-shrink-0">
+          
+          <!-- Title & Milestone -->
+          <div class="flex items-center gap-2.5">
+            <div class="w-8 h-8 rounded-xl bg-weight-soft flex items-center justify-center text-weight border border-weight-border">
+              <Scale class="w-4 h-4" />
+            </div>
+            <div>
+              <h2 class="text-sm sm:text-base font-extrabold text-primaryText leading-none flex items-center gap-2">
+                <span>Curva de Crecimiento</span>
+                <span v-if="stats.latestWeightKg" class="text-xs font-mono font-bold text-weight bg-weight-soft px-2 py-0.5 rounded-full border border-weight-border">
+                  {{ stats.latestWeightKg.toFixed(3) }} kg
+                </span>
+              </h2>
+              <span class="text-[10px] text-mutedText block mt-0.5">
+                Modo Horizontal Extendido • {{ chartPoints.length }} puntos diarios
+              </span>
+            </div>
+          </div>
+
+          <!-- Controls: Period Selector, Manual Rotate, Close -->
+          <div class="flex items-center gap-2">
+            
+            <!-- Period tabs -->
+            <div class="flex items-center bg-subtle p-1 rounded-xl border border-borderSubtle text-xs font-bold">
+              <button
+                type="button"
+                @click="activePeriod = 'week'"
+                class="px-2.5 py-1 rounded-lg transition-all text-xs"
+                :class="activePeriod === 'week' ? 'bg-surface text-primaryText shadow-xs font-black' : 'text-mutedText hover:text-secondaryText'"
+              >
+                Semana
+              </button>
+              <button
+                type="button"
+                @click="activePeriod = 'month'"
+                class="px-2.5 py-1 rounded-lg transition-all text-xs"
+                :class="activePeriod === 'month' ? 'bg-surface text-primaryText shadow-xs font-black' : 'text-mutedText hover:text-secondaryText'"
+              >
+                Mes
+              </button>
+              <button
+                type="button"
+                @click="activePeriod = 'year'"
+                class="px-2.5 py-1 rounded-lg transition-all text-xs"
+                :class="activePeriod === 'year' ? 'bg-surface text-primaryText shadow-xs font-black' : 'text-mutedText hover:text-secondaryText'"
+              >
+                Año
+              </button>
+              <button
+                type="button"
+                @click="activePeriod = 'all'"
+                class="px-2.5 py-1 rounded-lg transition-all text-xs"
+                :class="activePeriod === 'all' ? 'bg-surface text-primaryText shadow-xs font-black' : 'text-mutedText hover:text-secondaryText'"
+              >
+                Todos
+              </button>
+            </div>
+
+            <!-- Manual Rotate Toggle Button -->
+            <button
+              type="button"
+              @click="toggleRotation"
+              class="p-2 rounded-xl bg-subtle hover:bg-borderSubtle text-secondaryText hover:text-primaryText border border-borderSubtle active:scale-95 transition-all"
+              title="Girar orientación"
+            >
+              <RotateCw class="w-4 h-4 text-primaryText" />
+            </button>
+
+            <!-- Close Fullscreen Button -->
+            <button
+              type="button"
+              @click="closeFullscreen"
+              class="p-2 rounded-xl bg-rose-500/10 hover:bg-rose-500/20 text-rose-600 border border-rose-500/20 active:scale-95 transition-all flex items-center gap-1 text-xs font-bold"
+              title="Salir de pantalla completa (Esc)"
+            >
+              <Minimize2 class="w-4 h-4" />
+              <span class="hidden sm:inline">Cerrar</span>
+            </button>
+
+          </div>
+
+        </div>
+
+        <!-- Fullscreen Center Chart Area -->
+        <div class="flex-1 flex flex-col justify-center my-2 relative min-h-0">
+          
+          <div v-if="chartPoints.length < 2" class="text-center py-8">
+            <Scale class="w-10 h-10 mx-auto text-mutedText opacity-40 mb-2" />
+            <p class="text-sm font-bold text-primaryText">Se necesitan al menos 2 registros para trazar la curva</p>
+            <p class="text-xs text-mutedText mt-1">Registrá más pesajes para ver la evolución en pantalla completa.</p>
+          </div>
+
+          <div v-else class="w-full h-full flex items-center justify-center">
+            <svg 
+              :viewBox="`0 0 ${fsSvgWidth} ${fsSvgHeight}`" 
+              class="w-full h-full max-h-[70vh] select-none overflow-visible"
+              @mouseleave="activeHoveredPointIndex = null"
+            >
+              <defs>
+                <linearGradient id="fsWeightAreaGradient" x1="0" y1="0" x2="0" y2="1">
+                  <stop offset="0%" stop-color="var(--weight-accent)" stop-opacity="0.30" />
+                  <stop offset="100%" stop-color="var(--weight-accent)" stop-opacity="0.0" />
+                </linearGradient>
+
+                <filter id="fsGlow" x="-20%" y="-20%" width="140%" height="140%">
+                  <feDropShadow dx="0" dy="3" stdDeviation="3" flood-color="var(--weight-accent)" flood-opacity="0.4" />
+                </filter>
+              </defs>
+
+              <!-- Y-Axis Grid Lines & Labels -->
+              <g class="opacity-50">
+                <line 
+                  v-for="(grid, idx) in fsYGridLines" 
+                  :key="'fs-grid-' + idx"
+                  :x1="fsPadLeft" 
+                  :y1="grid.y" 
+                  :x2="fsSvgWidth - fsPadRight" 
+                  :y2="grid.y" 
+                  stroke="currentColor" 
+                  stroke-dasharray="4 4"
+                  class="text-borderSubtle stroke-[1.5]"
+                />
+
+                <text 
+                  v-for="(grid, idx) in fsYGridLines" 
+                  :key="'fs-lbl-' + idx"
+                  :x="fsPadLeft - 8" 
+                  :y="grid.y + 4" 
+                  text-anchor="end" 
+                  class="fill-mutedText text-[11px] font-mono font-extrabold"
+                >
+                  {{ grid.value }} kg
+                </text>
+              </g>
+
+              <!-- Area Fill -->
+              <path 
+                :d="fsSvgAreaD" 
+                fill="url(#fsWeightAreaGradient)" 
+              />
+
+              <!-- Curve Line -->
+              <path 
+                :d="fsSvgPathD" 
+                fill="none" 
+                stroke="var(--weight-accent)" 
+                stroke-width="4" 
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                filter="url(#fsGlow)"
+              />
+
+              <!-- Interactive Dots & Target Hit Areas -->
+              <g v-for="(pt, idx) in fsComputedSvgPoints" :key="'fs-pt-' + pt.id">
+                
+                <!-- Vertical Guide Line on Hover -->
+                <line
+                  v-if="activeHoveredPointIndex === idx"
+                  :x1="pt.x"
+                  :y1="fsPadTop"
+                  :x2="pt.x"
+                  :y2="fsPadTop + fsPlotHeight"
+                  stroke="var(--weight-accent)"
+                  stroke-width="2"
+                  stroke-dasharray="3 3"
+                  class="opacity-80"
+                />
+
+                <!-- Outer Dot Pulse / Halo -->
+                <circle
+                  :cx="pt.x"
+                  :cy="pt.y"
+                  :r="activeHoveredPointIndex === idx ? 9 : 5.5"
+                  fill="var(--bg-surface)"
+                  stroke="var(--weight-accent)"
+                  :stroke-width="activeHoveredPointIndex === idx ? 4 : 2.5"
+                  class="transition-all duration-150 cursor-pointer"
+                />
+
+                <!-- Center Dot Core -->
+                <circle
+                  :cx="pt.x"
+                  :cy="pt.y"
+                  :r="activeHoveredPointIndex === idx ? 4 : 2"
+                  fill="var(--weight-accent)"
+                  class="pointer-events-none"
+                />
+
+                <!-- Date Label below -->
+                <text
+                  :x="pt.x"
+                  :y="fsPadTop + fsPlotHeight + 20"
+                  text-anchor="middle"
+                  class="fill-mutedText text-[10px] font-bold"
+                  :class="activeHoveredPointIndex === idx ? 'fill-primaryText font-black text-xs' : ''"
+                >
+                  {{ pt.dateLabel }}
+                </text>
+
+                <!-- Invisible Large Hitbox for touch / hover -->
+                <rect
+                  :x="pt.x - 24"
+                  :y="fsPadTop - 15"
+                  width="48"
+                  :height="fsPlotHeight + 40"
+                  fill="transparent"
+                  class="cursor-pointer"
+                  @mouseenter="activeHoveredPointIndex = idx"
+                  @touchstart.passive="activeHoveredPointIndex = idx"
+                />
+              </g>
+            </svg>
+          </div>
+
+        </div>
+
+        <!-- Fullscreen Bottom Info & Tooltip Strip -->
+        <div class="pt-2 border-t border-borderSubtle flex items-center justify-between gap-3 text-xs flex-shrink-0">
+          
+          <div v-if="fsHoveredPoint" class="flex items-center gap-3 min-w-0">
+            <div class="w-8 h-8 rounded-xl bg-weight-soft border border-weight-border flex items-center justify-center text-weight flex-shrink-0">
+              <Scale class="w-4 h-4" />
+            </div>
+            <div class="truncate">
+              <div class="flex items-center gap-2">
+                <span class="font-black text-primaryText font-mono text-sm sm:text-base">
+                  {{ fsHoveredPoint.weightKg.toFixed(3) }} kg
+                </span>
+                <span class="text-xs text-mutedText font-mono">
+                  ({{ fsHoveredPoint.weightGrams }} g)
+                </span>
+                <span 
+                  v-if="fsHoveredPoint.diffFromPrevGrams !== null"
+                  class="font-mono font-bold text-xs px-2 py-0.5 rounded-lg"
+                  :class="fsHoveredPoint.diffFromPrevGrams >= 0 ? 'bg-emerald-500/10 text-emerald-600' : 'bg-rose-500/10 text-rose-600'"
+                >
+                  {{ fsHoveredPoint.diffFromPrevGrams >= 0 ? `+${fsHoveredPoint.diffFromPrevGrams}` : fsHoveredPoint.diffFromPrevGrams }}g
+                </span>
+              </div>
+              <div class="text-[11px] text-mutedText truncate mt-0.5">
+                {{ fsHoveredPoint.fullDateLabel }}
+                <span v-if="fsHoveredPoint.notes" class="text-secondaryText font-medium ml-1">
+                  • "{{ fsHoveredPoint.notes }}"
+                </span>
+              </div>
+            </div>
+          </div>
+
+          <div v-else class="flex items-center gap-4 text-mutedText text-xs">
+            <span class="flex items-center gap-1.5">
+              <span class="w-2 h-2 rounded-full bg-weight inline-block" />
+              <span>Tocá cualquier punto para inspeccionar el pesaje</span>
+            </span>
+          </div>
+
+          <!-- Total Delta Summary -->
+          <div class="flex items-center gap-2 font-mono text-xs flex-shrink-0">
+            <span class="text-mutedText">Ganancia total:</span>
+            <span 
+              class="font-black px-2 py-0.5 rounded-lg"
+              :class="stats.diffTotalGrams && stats.diffTotalGrams >= 0 ? 'bg-weight-soft text-weight border border-weight-border' : 'bg-subtle text-primaryText'"
+            >
+              {{ stats.diffTotalGrams ? (stats.diffTotalGrams > 0 ? `+${stats.diffTotalGrams}` : stats.diffTotalGrams) : 0 }}g
+            </span>
+          </div>
+
+        </div>
+
+      </div>
+    </div>
 
     <!-- Delete Confirmation Modal -->
     <div

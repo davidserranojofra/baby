@@ -1,20 +1,36 @@
 <script setup lang="ts">
 import { ref, computed, onMounted } from 'vue';
-import { Moon, Sun, Baby, Scale, Pill, BarChart2, AlertTriangle, LogOut, User as UserIcon, Loader2 } from 'lucide-vue-next';
+import { Moon, Sun, Baby, Scale, Ruler, Pill, BarChart2, AlertTriangle, LogOut, User as UserIcon, Loader2 } from 'lucide-vue-next';
 import { useFeedingTracker } from '~/composables/useFeedingTracker';
 import { useSleepTracker } from '~/composables/useSleepTracker';
 import { useMedicationTracker } from '~/composables/useMedicationTracker';
 import { useWeightTracker } from '~/composables/useWeightTracker';
+import { useHeightTracker } from '~/composables/useHeightTracker';
 import { useTheme } from '~/composables/useTheme';
 import { useAuth } from '~/composables/useAuth';
 import ActiveTimerBar from '~/components/ActiveTimerBar.vue';
 import WeightHero from '~/components/WeightHero.vue';
 import WeightModal from '~/components/WeightModal.vue';
+import HeightHero from '~/components/HeightHero.vue';
+import HeightModal from '~/components/HeightModal.vue';
 import type { TabType } from '~/components/BottomNav.vue';
-import type { CreateFeedingDTO, CreateSleepDTO, CreateMedicationDTO, CreateWeightDTO, UpdateWeightDTO, WeightLog } from '~/types/baby-tracker';
+import type { 
+  CreateFeedingDTO, 
+  CreateSleepDTO, 
+  CreateMedicationDTO, 
+  CreateWeightDTO, 
+  UpdateWeightDTO, 
+  WeightLog,
+  CreateHeightDTO,
+  UpdateHeightDTO,
+  HeightLog
+} from '~/types/baby-tracker';
 
 // Navigation tab state
 const currentTab = ref<TabType>('feeding');
+
+// Growth sub-tab state ('weight' | 'height')
+const growthSubTab = ref<'weight' | 'height'>('weight');
 
 // Theme composable
 const { isDark, toggleTheme, initTheme } = useTheme();
@@ -94,6 +110,18 @@ const {
   getChartPoints
 } = useWeightTracker();
 
+const {
+  heights,
+  isLoading: isHeightLoading,
+  error: heightError,
+  stats: heightStats,
+  fetchHeights,
+  createHeight,
+  updateHeight,
+  deleteHeight,
+  getChartPoints: getHeightChartPoints
+} = useHeightTracker();
+
 // UI Modals state
 const isManualFeedingOpen = ref<boolean>(false);
 const isManualSleepOpen = ref<boolean>(false);
@@ -101,6 +129,9 @@ const isFeedingTimerOpen = ref<boolean>(false);
 const isSleepTimerOpen = ref<boolean>(false);
 const isWeightModalOpen = ref<boolean>(false);
 const weightToEdit = ref<WeightLog | null>(null);
+
+const isHeightModalOpen = ref<boolean>(false);
+const heightToEdit = ref<HeightLog | null>(null);
 
 const handleOpenCreateWeight = () => {
   weightToEdit.value = null;
@@ -126,6 +157,35 @@ const handleUpdateWeight = async (dto: UpdateWeightDTO) => {
     await updateWeight(dto);
     isWeightModalOpen.value = false;
     weightToEdit.value = null;
+  } catch (e) {
+    // Handled in composable
+  }
+};
+
+const handleOpenCreateHeight = () => {
+  heightToEdit.value = null;
+  isHeightModalOpen.value = true;
+};
+
+const handleOpenEditHeight = (height: HeightLog) => {
+  heightToEdit.value = height;
+  isHeightModalOpen.value = true;
+};
+
+const handleCreateHeight = async (dto: CreateHeightDTO) => {
+  try {
+    await createHeight(dto);
+    isHeightModalOpen.value = false;
+  } catch (e) {
+    // Handled in composable
+  }
+};
+
+const handleUpdateHeight = async (dto: UpdateHeightDTO) => {
+  try {
+    await updateHeight(dto);
+    isHeightModalOpen.value = false;
+    heightToEdit.value = null;
   } catch (e) {
     // Handled in composable
   }
@@ -209,6 +269,7 @@ onMounted(() => {
   fetchSleepLogs();
   fetchMedications();
   fetchWeights();
+  fetchHeights();
 });
 </script>
 
@@ -223,14 +284,16 @@ onMounted(() => {
             :class="{
               'bg-breastLeft-soft border-breastLeft-border text-breastLeft': currentTab === 'feeding',
               'bg-bottle-soft border-bottle-border text-bottle': currentTab === 'sleep',
-              'bg-weight-soft border-weight-border text-weight': currentTab === 'weight',
+              'bg-weight-soft border-weight-border text-weight': currentTab === 'weight' && growthSubTab === 'weight',
+              'bg-height-soft border-height-border text-height': currentTab === 'weight' && growthSubTab === 'height',
               'bg-meds-soft border-meds-border text-meds': currentTab === 'meds',
               'bg-subtle border-borderSubtle text-primaryText': currentTab === 'stats'
             }"
           >
             <Baby v-if="currentTab === 'feeding'" class="w-5 h-5" />
             <Moon v-else-if="currentTab === 'sleep'" class="w-5 h-5" />
-            <Scale v-else-if="currentTab === 'weight'" class="w-5 h-5" />
+            <Scale v-else-if="currentTab === 'weight' && growthSubTab === 'weight'" class="w-5 h-5" />
+            <Ruler v-else-if="currentTab === 'weight' && growthSubTab === 'height'" class="w-5 h-5" />
             <Pill v-else-if="currentTab === 'meds'" class="w-5 h-5" />
             <BarChart2 v-else class="w-5 h-5" />
           </div>
@@ -271,14 +334,14 @@ onMounted(() => {
       
       <!-- Global Error / Notice Banner -->
       <div 
-        v-if="feedingError || sleepError || weightError || medError" 
+        v-if="feedingError || sleepError || weightError || heightError || medError" 
         class="p-3.5 rounded-2xl bg-warningSoft-soft border border-warningSoft-border text-xs text-primaryText flex items-start gap-2.5"
       >
         <AlertTriangle class="w-4 h-4 text-warningSoft flex-shrink-0 mt-0.5" />
         <div class="flex-1">
           <p class="font-bold">Aviso de conexión</p>
           <p class="text-secondaryText text-[11px] mt-0.5">
-            {{ feedingError || sleepError || weightError || medError }}
+            {{ feedingError || sleepError || weightError || heightError || medError }}
           </p>
         </div>
       </div>
@@ -355,17 +418,56 @@ onMounted(() => {
         </div>
       </div>
 
-      <!-- Tab 3: Peso / Weight View -->
+      <!-- Tab 3: Crecimiento (Peso y Altura / Talla) View -->
       <div v-show="currentTab === 'weight'" class="space-y-4 animate-in fade-in duration-150">
-        <WeightHero
-          :weights="weights"
-          :stats="weightStats"
-          :get-chart-points="getChartPoints"
-          :is-loading="isWeightLoading"
-          @open-create="handleOpenCreateWeight"
-          @open-edit="handleOpenEditWeight"
-          @delete-weight="deleteWeight"
-        />
+        
+        <!-- Segmented Control for Growth Sub-Tabs -->
+        <div class="flex items-center p-1 bg-surface rounded-2xl border border-borderSubtle shadow-soft-sm">
+          <button
+            type="button"
+            @click="growthSubTab = 'weight'"
+            class="flex-1 py-2 rounded-xl text-xs font-bold flex items-center justify-center gap-1.5 transition-all"
+            :class="growthSubTab === 'weight' ? 'bg-weight text-white shadow-soft-xs font-black' : 'text-mutedText hover:text-secondaryText'"
+          >
+            <Scale class="w-3.5 h-3.5" />
+            <span>Peso (kg)</span>
+          </button>
+          <button
+            type="button"
+            @click="growthSubTab = 'height'"
+            class="flex-1 py-2 rounded-xl text-xs font-bold flex items-center justify-center gap-1.5 transition-all"
+            :class="growthSubTab === 'height' ? 'bg-height text-white shadow-soft-xs font-black' : 'text-mutedText hover:text-secondaryText'"
+          >
+            <Ruler class="w-3.5 h-3.5" />
+            <span>Altura (cm)</span>
+          </button>
+        </div>
+
+        <!-- Sub-View: Peso -->
+        <div v-show="growthSubTab === 'weight'" class="space-y-4 animate-in fade-in duration-150">
+          <WeightHero
+            :weights="weights"
+            :stats="weightStats"
+            :get-chart-points="getChartPoints"
+            :is-loading="isWeightLoading"
+            @open-create="handleOpenCreateWeight"
+            @open-edit="handleOpenEditWeight"
+            @delete-weight="deleteWeight"
+          />
+        </div>
+
+        <!-- Sub-View: Altura -->
+        <div v-show="growthSubTab === 'height'" class="space-y-4 animate-in fade-in duration-150">
+          <HeightHero
+            :heights="heights"
+            :stats="heightStats"
+            :get-chart-points="getHeightChartPoints"
+            :is-loading="isHeightLoading"
+            @open-create="handleOpenCreateHeight"
+            @open-edit="handleOpenEditHeight"
+            @delete-height="deleteHeight"
+          />
+        </div>
       </div>
 
       <!-- Tab 4: Medicación / Meds View -->
@@ -434,6 +536,16 @@ onMounted(() => {
       @close="isWeightModalOpen = false"
       @submit-create="handleCreateWeight"
       @submit-update="handleUpdateWeight"
+    />
+
+    <!-- Height Create / Edit Modal -->
+    <HeightModal
+      :is-open="isHeightModalOpen"
+      :is-loading="isHeightLoading"
+      :height-to-edit="heightToEdit"
+      @close="isHeightModalOpen = false"
+      @submit-create="handleCreateHeight"
+      @submit-update="handleUpdateHeight"
     />
 
     <!-- Active Live Breastfeeding Timer Modal -->

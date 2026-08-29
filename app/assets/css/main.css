@@ -35,6 +35,10 @@
     --weight-soft: #f0fdfa;
     --weight-border: #99f6e4;
 
+    --height-accent: #6366f1;
+    --height-soft: #eef2ff;
+    --height-border: #c7d2fe;
+
     --warning-accent: #f59e0b;
     --warning-soft: #fffbeb;
     --warning-border: #fde68a;
@@ -71,6 +75,10 @@
     --weight-accent: #2dd4bf;
     --weight-soft: #134e4a25;
     --weight-border: #0f766e40;
+
+    --height-accent: #818cf8;
+    --height-soft: #3730a325;
+    --height-border: #4f46e540;
 
     --warning-accent: #fbbf24;
     --warning-soft: #78350f25;

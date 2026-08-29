@@ -48,6 +48,11 @@ export default <Config>{
           soft: 'var(--weight-soft)',
           border: 'var(--weight-border)'
         },
+        height: {
+          DEFAULT: 'var(--height-accent)',
+          soft: 'var(--height-soft)',
+          border: 'var(--height-border)'
+        },
         warningSoft: {
           DEFAULT: 'var(--warning-accent)',
           soft: 'var(--warning-soft)',

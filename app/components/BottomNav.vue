@@ -49,7 +49,7 @@ const emit = defineEmits<{
         <span class="text-[10px] sm:text-[11px] leading-none">Sueño</span>
       </button>
 
-      <!-- Tab 3: Peso / Weight -->
+      <!-- Tab 3: Crecimiento / Growth (Peso & Altura) -->
       <button
         type="button"
         @click="emit('update:tab', 'weight')"
@@ -62,7 +62,7 @@ const emit = defineEmits<{
         >
           <Scale class="w-5 h-5" />
         </div>
-        <span class="text-[10px] sm:text-[11px] leading-none">Peso</span>
+        <span class="text-[10px] sm:text-[11px] leading-none">Crecimiento</span>
       </button>
 
       <!-- Tab 4: Medicamentos / Meds -->

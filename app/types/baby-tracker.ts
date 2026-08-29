@@ -240,3 +240,53 @@ export interface WeightStatsSummary {
   totalLogsCount: number;
 }
 
+// ------------------------------------------------------------------------------
+// HEIGHT DOMAIN TYPES
+// ------------------------------------------------------------------------------
+
+export interface HeightLog {
+  id: string;
+  user_id?: string | null;
+  height_cm: number;
+  recorded_at: string; // ISO 8601 string
+  notes?: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface CreateHeightDTO {
+  height_cm: number;
+  recorded_at: string;
+  notes?: string | null;
+}
+
+export interface UpdateHeightDTO {
+  id: string;
+  height_cm: number;
+  recorded_at: string;
+  notes?: string | null;
+}
+
+export type HeightTimeframePeriod = 'week' | 'month' | 'year' | 'all';
+
+export interface HeightChartPoint {
+  id: string;
+  dateKey: string; // YYYY-MM-DD
+  dateLabel: string; // "18 Ago", "Hoy", etc.
+  fullDateLabel: string; // "18 de agosto de 2026, 10:30"
+  heightCm: number;
+  diffFromPrevCm: number | null;
+  notes?: string | null;
+  rawLog: HeightLog;
+}
+
+export interface HeightStatsSummary {
+  latestHeightCm: number | null;
+  latestRecordedAt: string | null;
+  diffRecentCm: number | null; // diff compared to previous measurement
+  diffTotalCm: number | null;  // diff compared to first recorded measurement
+  firstHeightCm: number | null;
+  totalLogsCount: number;
+}
+
+

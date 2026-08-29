@@ -177,6 +177,35 @@ export interface Database {
           created_at?: string
           updated_at?: string
         }
+      },
+      height_logs: {
+        Row: {
+          id: string
+          user_id: string | null
+          height_cm: number
+          recorded_at: string
+          notes: string | null
+          created_at: string
+          updated_at: string
+        }
+        Insert: {
+          id?: string
+          user_id?: string | null
+          height_cm: number
+          recorded_at?: string
+          notes?: string | null
+          created_at?: string
+          updated_at?: string
+        }
+        Update: {
+          id?: string
+          user_id?: string | null
+          height_cm?: number
+          recorded_at?: string
+          notes?: string | null
+          created_at?: string
+          updated_at?: string
+        }
       }
     }
   }
