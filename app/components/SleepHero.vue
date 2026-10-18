@@ -2,6 +2,7 @@
 import { ref, computed, onMounted, onUnmounted } from 'vue';
 import { Moon, Clock, Play, Pause, Plus, Sparkles, Check, Maximize2, ChevronLeft, ChevronRight, Calendar, RotateCcw } from 'lucide-vue-next';
 import type { SleepLog, ActiveSleepSession, SleepStatsSummary } from '~/types/baby-tracker';
+import { getSleepSecondsForDate, getLocalDateStr } from '~/composables/useSleepTracker';
 
 const props = withDefaults(defineProps<{
   lastSleep: SleepLog | null;
@@ -10,13 +11,7 @@ const props = withDefaults(defineProps<{
   dateStats?: SleepStatsSummary;
   isLoading?: boolean;
 }>(), {
-  selectedDate: () => {
-    const d = new Date();
-    const y = d.getFullYear();
-    const m = String(d.getMonth() + 1).padStart(2, '0');
-    const day = String(d.getDate()).padStart(2, '0');
-    return `${y}-${m}-${day}`;
-  }
+  selectedDate: () => getLocalDateStr()
 });
 
 const emit = defineEmits<{
@@ -31,15 +26,28 @@ const emit = defineEmits<{
   (e: 'go-today'): void;
 }>();
 
-const todayStr = computed(() => {
-  const d = new Date();
-  const y = d.getFullYear();
-  const m = String(d.getMonth() + 1).padStart(2, '0');
-  const day = String(d.getDate()).padStart(2, '0');
-  return `${y}-${m}-${day}`;
-});
+const todayStr = computed(() => getLocalDateStr());
 
 const isSelectedToday = computed(() => props.selectedDate === todayStr.value);
+
+const displayLastSleep = computed<SleepLog | null>(() => {
+  if (isSelectedToday.value) {
+    return props.dateStats?.lastSleep || props.lastSleep || null;
+  }
+  return props.dateStats?.lastSleep || null;
+});
+
+const displayLastSleepSummary = computed(() => {
+  const s = displayLastSleep.value;
+  if (!s) return 'Sin registros para este día';
+  const sliceSec = getSleepSecondsForDate(s, props.selectedDate);
+  const startFmt = new Date(s.started_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+  const endFmt = new Date(s.ended_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+  if (sliceSec > 0 && sliceSec < s.duration_seconds) {
+    return `${formatReadableDuration(sliceSec)} este día (${formatReadableDuration(s.duration_seconds)} total • ${startFmt}-${endFmt})`;
+  }
+  return `Durmió ${formatReadableDuration(s.duration_seconds)} (${startFmt}-${endFmt})`;
+});
 
 const formattedDateLabel = computed(() => {
   if (isSelectedToday.value) {
@@ -99,7 +107,7 @@ const formatReadableDuration = (seconds: number) => {
   const h = Math.floor(seconds / 3600);
   const m = Math.floor((seconds % 3600) / 60);
   if (h === 0) return `${m} min`;
-  return `${h}h ${m > 0 ? `${m}m` : ''}`;
+  return `${h}h ${m > 0 ? `${m}m` : ''}`.trim();
 };
 </script>
 
@@ -244,17 +252,17 @@ const formatReadableDuration = (seconds: number) => {
               {{ isSelectedToday ? 'Último Sueño / Siesta' : `Último Sueño (${formattedDateLabel})` }}
             </h2>
             <p class="text-sm font-bold text-primaryText flex items-center gap-1.5">
-              {{ props.lastSleep ? `Durmió ${formatReadableDuration(props.lastSleep.duration_seconds)}` : 'Sin registros para este día' }}
+              {{ displayLastSleepSummary }}
             </p>
           </div>
         </div>
 
         <div 
-          v-if="props.lastSleep?.notes"
+          v-if="displayLastSleep?.notes"
           class="max-w-[140px] truncate text-[11px] text-mutedText bg-subtle px-2 py-0.5 rounded-full border border-borderSubtle"
-          :title="props.lastSleep.notes"
+          :title="displayLastSleep.notes"
         >
-          {{ props.lastSleep.notes }}
+          {{ displayLastSleep.notes }}
         </div>
       </div>
 

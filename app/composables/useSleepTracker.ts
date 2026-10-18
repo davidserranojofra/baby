@@ -13,13 +13,50 @@ const sleepLogs = ref<SleepLog[]>([]);
 const isLoading = ref<boolean>(false);
 const error = ref<string | null>(null);
 
-const getTodayString = () => {
-  const d = new Date();
+export const getLocalDateStr = (date: Date | string = new Date()): string => {
+  const d = typeof date === 'string' ? new Date(date) : date;
   const year = d.getFullYear();
   const month = String(d.getMonth() + 1).padStart(2, '0');
   const day = String(d.getDate()).padStart(2, '0');
   return `${year}-${month}-${day}`;
 };
+
+export const getSleepSecondsForDate = (log: SleepLog, dateStr: string): number => {
+  if (!log || !log.started_at || !dateStr) return 0;
+  const parts = dateStr.split('-').map(Number);
+  if (parts.length !== 3 || parts.some(isNaN)) return 0;
+  const [y, m, d] = parts;
+
+  const dayStart = new Date(y, m - 1, d, 0, 0, 0, 0).getTime();
+  const dayEnd = new Date(y, m - 1, d + 1, 0, 0, 0, 0).getTime();
+
+  const logStart = new Date(log.started_at).getTime();
+  const totalDuration = Math.max(0, log.duration_seconds || 0);
+  const parsedEnd = log.ended_at ? new Date(log.ended_at).getTime() : NaN;
+  const logEnd = !isNaN(parsedEnd) && parsedEnd > logStart
+    ? parsedEnd
+    : logStart + totalDuration * 1000;
+
+  if (isNaN(logStart) || isNaN(logEnd) || logEnd <= logStart) {
+    if (!isNaN(logStart) && logStart >= dayStart && logStart < dayEnd) {
+      return totalDuration;
+    }
+    return 0;
+  }
+
+  const overlapStart = Math.max(logStart, dayStart);
+  const overlapEnd = Math.min(logEnd, dayEnd);
+  if (overlapEnd <= overlapStart) return 0;
+
+  const overlapWallSeconds = (overlapEnd - overlapStart) / 1000;
+  const wallSeconds = (logEnd - logStart) / 1000;
+  if (wallSeconds <= 0) return 0;
+
+  const ratio = totalDuration > 0 ? totalDuration / wallSeconds : 1;
+  return Math.round(overlapWallSeconds * ratio);
+};
+
+const getTodayString = () => getLocalDateStr();
 
 const selectedDate = ref<string>(getTodayString());
 const selectedPeriod = ref<TimeframePeriod>('day');
@@ -329,15 +366,14 @@ export const useSleepTracker = () => {
     return `${h}h ${m > 0 ? `${m}m` : ''}`.trim();
   };
 
-  // 12. Helper to get sleep logs for a specific local date YYYY-MM-DD
+  // 12. Helper to get sleep logs overlapping a specific local date YYYY-MM-DD
   const getLogsForDate = (dateStr: string) => {
-    return sleepLogs.value.filter(s => {
-      const logLocalDate = new Date(s.started_at).toLocaleDateString('en-CA'); // 'YYYY-MM-DD'
-      return logLocalDate === dateStr || s.started_at.startsWith(dateStr);
-    });
+    return sleepLogs.value
+      .filter(s => getSleepSecondsForDate(s, dateStr) > 0)
+      .sort((a, b) => new Date(b.started_at).getTime() - new Date(a.started_at).getTime());
   };
 
-  // 13. Calculate Stats for any single date
+  // 13. Calculate Stats for any single date (split-on-read across midnight)
   const getSleepStatsForDate = (dateStr: string): SleepStatsSummary => {
     const dayLogs = getLogsForDate(dateStr);
     const napCount = dayLogs.length;
@@ -345,7 +381,7 @@ export const useSleepTracker = () => {
     let longestNapSec = 0;
 
     dayLogs.forEach(s => {
-      const duration = s.duration_seconds || 0;
+      const duration = getSleepSecondsForDate(s, dateStr);
       totalSleepSeconds += duration;
       if (duration > longestNapSec) {
         longestNapSec = duration;
@@ -376,8 +412,8 @@ export const useSleepTracker = () => {
     return getSleepStatsForDate(selectedDate.value);
   });
 
-  // 16. Calculate Comprehensive Period Stats (Day, Week, Month)
-  const getSleepStatsForPeriod = (period: TimeframePeriod, targetDateStr: string): PeriodSleepStatsSummary => {
+  // 16. Calculate Comprehensive Period Stats (Day, Week, Month, All)
+  const getSleepStatsForPeriod = (period: TimeframePeriod | 'all', targetDateStr: string): PeriodSleepStatsSummary => {
     const today = getTodayString();
     const target = new Date(targetDateStr + 'T12:00:00');
     const dayNamesShort = ['D', 'L', 'M', 'X', 'J', 'V', 'S'];
@@ -396,8 +432,6 @@ export const useSleepTracker = () => {
         short: dayNamesShort[target.getDay()]
       });
     } else if (period === 'week') {
-      // 7 days ending at target date or Mon-Sun block
-      // Let's create a 7-day window ending at targetDateStr (or current week Mon-Sun)
       const currentDay = target.getDay(); // 0 is Sun, 1 is Mon...
       const diffToMonday = (currentDay + 6) % 7; // days since Monday
       const monday = new Date(target);
@@ -406,7 +440,7 @@ export const useSleepTracker = () => {
       for (let i = 0; i < 7; i++) {
         const d = new Date(monday);
         d.setDate(monday.getDate() + i);
-        const dStr = d.toLocaleDateString('en-CA');
+        const dStr = getLocalDateStr(d);
         const isToday = dStr === today;
         datesToInclude.push({
           dateStr: dStr,
@@ -421,15 +455,13 @@ export const useSleepTracker = () => {
       const endFmt = new Date(lastDate + 'T12:00:00').toLocaleDateString('es-ES', { day: 'numeric', month: 'short' });
       periodLabel = `Semana: ${startFmt} - ${endFmt}`;
     } else if (period === 'month') {
-      // Current calendar month of target date
       const year = target.getFullYear();
       const month = target.getMonth();
       const daysInMonth = new Date(year, month + 1, 0).getDate();
 
       for (let day = 1; day <= daysInMonth; day++) {
         const d = new Date(year, month, day);
-        const dStr = d.toLocaleDateString('en-CA');
-        const isToday = dStr === today;
+        const dStr = getLocalDateStr(d);
         datesToInclude.push({
           dateStr: dStr,
           label: `${day}`,
@@ -438,41 +470,74 @@ export const useSleepTracker = () => {
       }
 
       periodLabel = `${monthNames[month]} ${year}`;
-    }
-
-    // Build day-by-day metrics
-    let totalPeriodSeconds = 0;
-    let totalPeriodNaps = 0;
-    let longestNapPeriodSec = 0;
-    const periodLogs: SleepLog[] = [];
-
-    const dailyBreakdown: DaySleepMetric[] = datesToInclude.map(item => {
-      const dayLogs = getLogsForDate(item.dateStr);
-      periodLogs.push(...dayLogs);
-      
-      let daySec = 0;
-      dayLogs.forEach(l => {
-        const dur = l.duration_seconds || 0;
-        daySec += dur;
-        if (dur > longestNapPeriodSec) {
-          longestNapPeriodSec = dur;
+    } else if (period === 'all') {
+      periodLabel = 'Todo el historial';
+      const dailyMap = new Set<string>();
+      sleepLogs.value.forEach(l => {
+        const startD = new Date(l.started_at);
+        const endD = l.ended_at ? new Date(l.ended_at) : new Date(startD.getTime() + (l.duration_seconds || 0) * 1000);
+        const cursor = new Date(startD.getFullYear(), startD.getMonth(), startD.getDate(), 12, 0, 0, 0);
+        const endCursor = new Date(endD.getFullYear(), endD.getMonth(), endD.getDate(), 12, 0, 0, 0);
+        while (cursor.getTime() <= endCursor.getTime()) {
+          const dStr = getLocalDateStr(cursor);
+          if (getSleepSecondsForDate(l, dStr) > 0) {
+            dailyMap.add(dStr);
+          }
+          cursor.setDate(cursor.getDate() + 1);
         }
       });
 
-      totalPeriodSeconds += daySec;
-      totalPeriodNaps += dayLogs.length;
+      Array.from(dailyMap).sort().forEach(dStr => {
+        const d = new Date(dStr + 'T12:00:00');
+        const isToday = dStr === today;
+        datesToInclude.push({
+          dateStr: dStr,
+          label: isToday ? 'Hoy' : d.toLocaleDateString('es-ES', { day: 'numeric', month: 'short' }),
+          short: dayNamesShort[d.getDay()]
+        });
+      });
+    }
+
+    // Build day-by-day metrics using split-on-read getSleepSecondsForDate
+    let totalPeriodSeconds = 0;
+    let longestNapPeriodSec = 0;
+    const periodLogMap = new Map<string, SleepLog>();
+    const periodLogSecondsMap = new Map<string, number>();
+
+    const dailyBreakdown: DaySleepMetric[] = datesToInclude.map(item => {
+      let dayTotalSec = 0;
+      let dayNapCount = 0;
+
+      sleepLogs.value.forEach(l => {
+        const sliceSec = getSleepSecondsForDate(l, item.dateStr);
+        if (sliceSec > 0) {
+          dayTotalSec += sliceSec;
+          dayNapCount += 1;
+          periodLogMap.set(l.id, l);
+          const accumulatedForLog = (periodLogSecondsMap.get(l.id) || 0) + sliceSec;
+          periodLogSecondsMap.set(l.id, accumulatedForLog);
+          if (accumulatedForLog > longestNapPeriodSec) {
+            longestNapPeriodSec = accumulatedForLog;
+          }
+        }
+      });
+
+      totalPeriodSeconds += dayTotalSec;
 
       return {
         date: item.dateStr,
         dayLabel: item.label,
         dayShort: item.short,
-        totalSleepSeconds: daySec,
-        totalSleepFormatted: formatSecondsToReadable(daySec),
-        totalHoursDecimal: Math.round((daySec / 3600) * 10) / 10,
-        napCount: dayLogs.length,
+        totalSleepSeconds: dayTotalSec,
+        totalSleepFormatted: formatSecondsToReadable(dayTotalSec),
+        totalHoursDecimal: Math.round((dayTotalSec / 3600) * 10) / 10,
+        napCount: dayNapCount,
         isTargetDay: item.dateStr === targetDateStr
       };
     });
+
+    const periodLogs = Array.from(periodLogMap.values());
+    const totalPeriodNaps = periodLogs.length;
 
     const daysCount = datesToInclude.length || 1;
     const dailyAvgSeconds = Math.round(totalPeriodSeconds / daysCount);
@@ -482,7 +547,7 @@ export const useSleepTracker = () => {
     const longestNapMinutes = Math.round(longestNapPeriodSec / 60);
 
     return {
-      period,
+      period: (period === 'all' ? 'month' : period) as TimeframePeriod,
       targetDate: targetDateStr,
       periodLabel,
       totalSleepSeconds: totalPeriodSeconds,
@@ -521,7 +586,7 @@ export const useSleepTracker = () => {
     } else if (selectedPeriod.value === 'month') {
       d.setMonth(d.getMonth() + step);
     }
-    selectedDate.value = d.toLocaleDateString('en-CA');
+    selectedDate.value = getLocalDateStr(d);
   };
 
   const goToToday = () => {
@@ -563,6 +628,9 @@ export const useSleepTracker = () => {
     setSelectedPeriod,
     navigateDate,
     goToToday,
+    getLocalDateStr,
+    getSleepSecondsForDate,
+    getLogsForDate,
     getSleepStatsForDate,
     getSleepStatsForPeriod
   };

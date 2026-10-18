@@ -24,6 +24,7 @@ import type {
   TimeframePeriod,
   PeriodSleepStatsSummary 
 } from '~/types/baby-tracker';
+import { getSleepSecondsForDate, getLocalDateStr } from '~/composables/useSleepTracker';
 
 const props = withDefaults(defineProps<{
   stats: FeedingStatsSummary;
@@ -36,13 +37,7 @@ const props = withDefaults(defineProps<{
   isLoading?: boolean;
 }>(), {
   selectedPeriod: 'day',
-  selectedDate: () => {
-    const d = new Date();
-    const y = d.getFullYear();
-    const m = String(d.getMonth() + 1).padStart(2, '0');
-    const day = String(d.getDate()).padStart(2, '0');
-    return `${y}-${m}-${day}`;
-  }
+  selectedDate: () => getLocalDateStr()
 });
 
 const emit = defineEmits<{
@@ -57,13 +52,7 @@ const emit = defineEmits<{
 const activeHistoryFilter = ref<'all' | 'feedings' | 'sleep'>('all');
 const showAllHistory = ref<boolean>(false);
 
-const todayStr = computed(() => {
-  const d = new Date();
-  const y = d.getFullYear();
-  const m = String(d.getMonth() + 1).padStart(2, '0');
-  const day = String(d.getDate()).padStart(2, '0');
-  return `${y}-${m}-${day}`;
-});
+const todayStr = computed(() => getLocalDateStr());
 
 const isCurrentPeriodToday = computed(() => {
   if (props.selectedPeriod === 'day') {
@@ -112,6 +101,9 @@ interface UnifiedActivity {
   started_at: string;
   ended_at: string;
   duration_seconds: number;
+  total_duration_seconds?: number;
+  crosses_midnight?: boolean;
+  split_badge?: string;
   title: string;
   notes?: string | null;
   breast_side?: string | null;
@@ -128,8 +120,8 @@ const combinedHistory = computed<UnifiedActivity[]>(() => {
 
   if (activeHistoryFilter.value === 'all' || activeHistoryFilter.value === 'feedings') {
     props.feedings.forEach(f => {
-      const fLocalDate = new Date(f.started_at).toLocaleDateString('en-CA');
-      if (showAllHistory.value || allowedDates.has(fLocalDate) || f.started_at.startsWith(props.selectedDate)) {
+      const fLocalDate = getLocalDateStr(f.started_at);
+      if (showAllHistory.value || allowedDates.has(fLocalDate) || fLocalDate === props.selectedDate) {
         const notes = f.notes || '';
         let title = 'Lactancia';
 
@@ -165,17 +157,65 @@ const combinedHistory = computed<UnifiedActivity[]>(() => {
 
   if (activeHistoryFilter.value === 'all' || activeHistoryFilter.value === 'sleep') {
     props.sleepLogs.forEach(s => {
-      const sLocalDate = new Date(s.started_at).toLocaleDateString('en-CA');
-      if (showAllHistory.value || allowedDates.has(sLocalDate) || s.started_at.startsWith(props.selectedDate)) {
+      const startLocalDate = getLocalDateStr(s.started_at);
+      const endLocalDate = s.ended_at ? getLocalDateStr(s.ended_at) : startLocalDate;
+      const crossesMidnight = startLocalDate !== endLocalDate;
+
+      if (showAllHistory.value) {
         items.push({
           id: s.id,
           type: 'sleep',
           started_at: s.started_at,
           ended_at: s.ended_at,
           duration_seconds: s.duration_seconds,
+          total_duration_seconds: s.duration_seconds,
+          crosses_midnight: crossesMidnight,
           title: 'Sueño / Siesta',
           notes: s.notes
         });
+        return;
+      }
+
+      if (props.selectedPeriod === 'day') {
+        const targetD = props.selectedDate;
+        const daySeconds = getSleepSecondsForDate(s, targetD);
+        if (daySeconds > 0) {
+          const isSplitSlice = daySeconds < s.duration_seconds;
+          items.push({
+            id: s.id,
+            type: 'sleep',
+            started_at: s.started_at,
+            ended_at: s.ended_at,
+            duration_seconds: daySeconds,
+            total_duration_seconds: s.duration_seconds,
+            crosses_midnight: crossesMidnight || isSplitSlice,
+            split_badge: isSplitSlice
+              ? `${formatDuration(daySeconds)} este día (de ${formatDuration(s.duration_seconds)} totales • cruza 00:00)`
+              : undefined,
+            title: 'Sueño / Siesta',
+            notes: s.notes
+          });
+        }
+      } else {
+        const datesList = allowedDates.size > 0 ? Array.from(allowedDates) : [props.selectedDate];
+        const periodSeconds = datesList.reduce((acc, d) => acc + getSleepSecondsForDate(s, d), 0);
+        if (periodSeconds > 0) {
+          const isSplitSlice = periodSeconds < s.duration_seconds;
+          items.push({
+            id: s.id,
+            type: 'sleep',
+            started_at: s.started_at,
+            ended_at: s.ended_at,
+            duration_seconds: periodSeconds,
+            total_duration_seconds: s.duration_seconds,
+            crosses_midnight: crossesMidnight || isSplitSlice,
+            split_badge: isSplitSlice
+              ? `${formatDuration(periodSeconds)} en este periodo (de ${formatDuration(s.duration_seconds)} totales)`
+              : undefined,
+            title: 'Sueño / Siesta',
+            notes: s.notes
+          });
+        }
       }
     });
   }
@@ -538,7 +578,20 @@ const combinedHistory = computed<UnifiedActivity[]>(() => {
               </div>
 
               <div class="text-[11px] text-mutedText mt-0.5">
-                {{ formatDate(item.started_at) }} • {{ formatTime(item.started_at) }} - {{ formatTime(item.ended_at) }}
+                <template v-if="item.crosses_midnight">
+                  {{ formatDate(item.started_at) }} {{ formatTime(item.started_at) }} → {{ formatDate(item.ended_at) }} {{ formatTime(item.ended_at) }}
+                </template>
+                <template v-else>
+                  {{ formatDate(item.started_at) }} • {{ formatTime(item.started_at) }} - {{ formatTime(item.ended_at) }}
+                </template>
+              </div>
+
+              <div
+                v-if="item.split_badge"
+                class="mt-1 inline-flex items-center gap-1 text-[10px] font-semibold text-bottle bg-bottle-soft/60 px-2 py-0.5 rounded-md border border-bottle-border/60"
+              >
+                <Moon class="w-2.5 h-2.5 flex-shrink-0" />
+                <span>{{ item.split_badge }}</span>
               </div>
 
               <!-- Notes / Comments Bubble -->

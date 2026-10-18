@@ -85,7 +85,8 @@ const {
   setSelectedDate: setSleepSelectedDate,
   setSelectedPeriod: setSleepSelectedPeriod,
   navigateDate: navigateSleepDate,
-  goToToday: goSleepToday
+  goToToday: goSleepToday,
+  getLocalDateStr
 } = useSleepTracker();
 
 const {
@@ -403,7 +404,7 @@ onMounted(() => {
         <div class="grid grid-cols-2 gap-3">
           <div class="p-4 rounded-2xl bg-surface border border-borderSubtle shadow-soft-sm">
             <span class="text-[11px] font-semibold text-mutedText block">
-              {{ selectedSleepDate === new Date().toISOString().split('T')[0] ? 'Total Sueño Hoy' : 'Total Sueño Día' }}
+              {{ selectedSleepDate === getLocalDateStr() ? 'Total Sueño Hoy' : 'Total Sueño Día' }}
             </span>
             <span class="text-2xl font-black text-primaryText font-mono mt-0.5 block">
               {{ selectedDateSleepStats.totalSleepFormatted }}
@@ -588,6 +589,7 @@ onMounted(() => {
     <SleepManualModal
       :is-open="isManualSleepOpen"
       :is-loading="isSleepLoading"
+      :selected-date="selectedSleepDate"
       @close="isManualSleepOpen = false"
       @submit="handleManualSleepSubmit"
     />
